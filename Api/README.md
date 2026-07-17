@@ -34,7 +34,7 @@ CORS_ORIGIN="https://your-netlify-site.netlify.app"
 3. Railway build command:
 
 ```bash
-npm ci && npm run build
+npm install && npm run build
 ```
 
 4. Railway start command:
