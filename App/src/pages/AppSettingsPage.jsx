@@ -248,7 +248,13 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
       const savedProduct = result.product || result
       notify('Product settings saved.')
       await refresh()
-      loadProduct({ ...savedProduct, variants: savedProduct.variants || productDraft.variants })
+      setProductDraft({
+        ...savedProduct,
+        price: savedProduct.price ?? '',
+        cost: savedProduct.cost ?? '',
+        optionTree: normalizeOptionTree(savedProduct.optionTree),
+        variants: savedProduct.variants || productDraft.variants,
+      })
     } catch (error) {
       notify(error.message || 'Product settings could not be saved.', 'error')
     } finally {

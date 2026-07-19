@@ -424,10 +424,9 @@ export async function createOrderAtomic(uid, order, stocks, _existingOrders, pay
   const items = []
 
   for (const item of order.items) {
-    const resolved =
-      item.productId && item.variantId
-        ? { product: { id: item.productId }, variant: { id: item.variantId } }
-        : await productVariantForLine(shopId, item, stocks)
+    const resolved = item.productId
+      ? { product: { id: item.productId }, variant: item.variantId ? { id: item.variantId } : null }
+      : await productVariantForLine(shopId, item, stocks)
     items.push({
       productId: resolved.product.id,
       variantId: resolved.variant?.id || undefined,
@@ -516,7 +515,11 @@ export async function refundPaymentAtomic(uid, orderId, details) {
 export async function createStockBatch(uid, stock) {
   const shopId = shopIdFrom(uid)
   const product = stock.productId ? { id: stock.productId } : await ensureProduct(shopId, stock)
-  const variant = stock.variantId ? { id: stock.variantId } : await ensureVariant(shopId, product, stock)
+  const variant = stock.variantId
+    ? { id: stock.variantId }
+    : stock.productId
+      ? null
+      : await ensureVariant(shopId, product, stock)
 
   return api.createInventory(shopId, {
     productId: product.id,

@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:local-smoke": "node scripts/local-smoke-test.cjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
