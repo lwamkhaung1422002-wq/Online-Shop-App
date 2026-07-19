@@ -34,37 +34,18 @@ import {
   validatePaymentDetails,
 } from '../domain/payments.js'
 import {
+  SIZE_OPTIONS,
   SOURCE_OPTIONS,
   formatKs,
   getToday,
-  getItemVariantKey,
+  getVariantKey,
 } from '../utils/storage.js'
-import {
-  catalogLabels,
-  normalizeCatalogSettings,
-  optionPathMatchesValueIds,
-  optionValuesForLevel,
-  normalizeOptionTree,
-  valueIdsFromOptionPath,
-  variantDisplayName,
-  variantOptionValue,
-} from '../utils/catalog.js'
 
 function initialLine(data) {
-  const catalog = normalizeCatalogSettings(data.catalogSettings)
-  const option1Values = data.option1Values?.length ? data.option1Values : catalog.option1Values
-  const option2Values = data.option2Values?.length ? data.option2Values : catalog.option2Values
-  const product = (data.products || []).find((entry) => entry.isActive !== false)
-  const variant = (product?.variants || []).find((entry) => entry.isActive !== false)
   return {
-    productId: product?.id || '',
-    variantId: variant?.id || '',
-    optionValueIds: valueIdsFromOptionPath(variant?.optionPath),
-    type: product?.name || data.productTypes[0] || '',
-    size: variantOptionValue(variant, 0, option1Values[0] || 'Default'),
-    color: variantOptionValue(variant, 1, option2Values[0] || '-'),
-    variantName: variant ? variantDisplayName(variant) : '',
-    optionPath: variant?.optionPath || [],
+    type: data.productTypes[0] || '',
+    size: SIZE_OPTIONS[0],
+    color: data.productColors[0] || '',
     quantity: 1,
     unitPrice: '',
     discount: 0,
@@ -74,17 +55,19 @@ function initialLine(data) {
 
 function defaultPrice(stocks, line) {
   const batch = sortStockBatches(stocks)
-    .filter((stock) => getItemVariantKey(stock) === getItemVariantKey(line))
+    .filter(
+      (stock) =>
+        getVariantKey(stock.size, stock.color, stock.type) ===
+        getVariantKey(line.size, line.color, line.type),
+    )
     .at(-1)
   return Number(batch?.salePrice ?? batch?.price ?? 0)
 }
 
-export default function OrderPage({ navigate, requireAuth = () => false }) {
+export default function OrderPage({ navigate }) {
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
-  const catalog = useMemo(() => normalizeCatalogSettings(data.catalogSettings), [data.catalogSettings])
-  const labels = useMemo(() => catalogLabels(catalog), [catalog])
   const [customer, setCustomer] = useState({
     name: '',
     phone: '',
@@ -114,32 +97,12 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
     [data.orders, data.stocks],
   )
   const available = Number(
-    availableMap[getItemVariantKey(lineDraft)] || 0,
+    availableMap[getVariantKey(lineDraft.size, lineDraft.color, lineDraft.type)] || 0,
   )
   const suggestedPrice = defaultPrice(data.stocks, lineDraft)
   const totals = useMemo(
     () => calculateOrderTotals(items, orderDiscount, deliveryFee),
     [deliveryFee, items, orderDiscount],
-  )
-  const activeProducts = useMemo(
-    () => (data.products || []).filter((product) => product.isActive !== false),
-    [data.products],
-  )
-  const selectedProduct = useMemo(
-    () => activeProducts.find((product) => String(product.id) === String(lineDraft.productId)) || null,
-    [activeProducts, lineDraft.productId],
-  )
-  const productOptionTree = useMemo(
-    () => normalizeOptionTree(selectedProduct?.optionTree),
-    [selectedProduct],
-  )
-  const activeVariants = useMemo(
-    () => (selectedProduct?.variants || []).filter((variant) => variant.isActive !== false),
-    [selectedProduct],
-  )
-  const selectedVariant = useMemo(
-    () => activeVariants.find((variant) => String(variant.id) === String(lineDraft.variantId)) || null,
-    [activeVariants, lineDraft.variantId],
   )
 
   useEffect(() => {
@@ -163,50 +126,8 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
     setCustomer((current) => ({ ...current, [key]: value }))
   }
 
-  const lineFromProductVariant = (product, variant = null) => ({
-    productId: product?.id || '',
-    variantId: variant?.id || '',
-    optionValueIds: valueIdsFromOptionPath(variant?.optionPath),
-    type: product?.name || '',
-    size: variantOptionValue(variant, 0, 'Default'),
-    color: variantOptionValue(variant, 1, '-'),
-    variantName: variant ? variantDisplayName(variant) : '',
-    optionPath: variant?.optionPath || [],
-    unitPrice: '',
-  })
-
-  const findVariantByValueIds = (variants, valueIds = [], levelCount = 0) =>
-    variants.find((variant) => optionPathMatchesValueIds(variant.optionPath, valueIds.slice(0, levelCount))) || null
-
-  const lineFromProductPath = (product, valueIds = []) => {
-    const tree = normalizeOptionTree(product?.optionTree)
-    const variant = valueIds.length === tree.levels.length
-      ? findVariantByValueIds((product?.variants || []).filter((entry) => entry.isActive !== false), valueIds, tree.levels.length)
-      : null
-    return {
-      ...lineFromProductVariant(product, variant),
-      optionValueIds: valueIds,
-    }
-  }
-
   const updateLine = (key, value) => {
     setLineDraft((current) => {
-      if (key === 'productId') {
-        const product = activeProducts.find((entry) => String(entry.id) === String(value))
-        const variant = (product?.variants || []).find((entry) => entry.isActive !== false) || null
-        return { ...current, ...lineFromProductVariant(product, variant) }
-      }
-
-      if (key.startsWith('optionValueId:')) {
-        const levelIndex = Number(key.split(':')[1])
-        const nextIds = current.optionValueIds.slice(0, levelIndex)
-        if (value) nextIds[levelIndex] = value
-        return {
-          ...current,
-          ...lineFromProductPath(selectedProduct, nextIds),
-        }
-      }
-
       const next = { ...current, [key]: value }
       if (['type', 'size', 'color'].includes(key)) next.unitPrice = ''
       return next
@@ -214,18 +135,12 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
   }
 
   const addItem = () => {
-    if (requireAuth()) return
-
     const quantity = Number(lineDraft.quantity || 0)
     const unitPrice = Number(lineDraft.unitPrice || suggestedPrice || 0)
     const discount = Number(lineDraft.discount || 0)
 
-    if (!lineDraft.productId || !lineDraft.type || quantity <= 0 || unitPrice < 0) {
-      notify(`Choose a ${labels.product.toLowerCase()}, valid quantity, and price.`, 'warning')
-      return
-    }
-    if (productOptionTree.levels.length > 0 && !lineDraft.variantId) {
-      notify('Choose a valid variant before adding this item.', 'warning')
+    if (!lineDraft.type || !lineDraft.color || quantity <= 0 || unitPrice < 0) {
+      notify('Choose a product, color, valid quantity, and price.', 'warning')
       return
     }
     if (!preorder && quantity > available) {
@@ -233,10 +148,10 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
       return
     }
 
-    const mergeKey = getItemVariantKey(lineDraft)
+    const mergeKey = getVariantKey(lineDraft.size, lineDraft.color, lineDraft.type)
     const existing = items.find(
       (item) =>
-        getItemVariantKey(item) === mergeKey &&
+        getVariantKey(item.size, item.color, item.type) === mergeKey &&
         item.unitPrice === unitPrice &&
         item.discount === discount &&
         item.deductionType === lineDraft.deductionType,
@@ -262,13 +177,9 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
     } else {
       const next = {
         id: crypto.randomUUID(),
-        productId: lineDraft.productId,
-        variantId: lineDraft.variantId || null,
         type: lineDraft.type,
         size: lineDraft.size,
         color: lineDraft.color,
-        variantName: lineDraft.variantName,
-        optionPath: lineDraft.optionPath,
         quantity,
         unitPrice,
         unitCost: 0,
@@ -279,13 +190,7 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
       setItems((current) => [...current, { ...next, lineTotal: lineTotal(next) }])
     }
 
-    setLineDraft((current) => ({
-      ...current,
-      quantity: 1,
-      unitPrice: '',
-      discount: 0,
-      deductionType: 'discount',
-    }))
+    setLineDraft((current) => ({ ...initialLine(data), type: current.type, color: current.color }))
   }
 
   const removeItem = (id) => {
@@ -294,8 +199,6 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
 
   const submitOrder = async (event) => {
     event.preventDefault()
-    if (requireAuth()) return
-
     if (!customer.name.trim() || !customer.phone.trim()) {
       notify('Customer name and phone are required.', 'warning')
       return
@@ -374,7 +277,7 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
     <Box className="page-stack">
       <PageHeader
         title="Create order"
-        subtitle={`Build one customer order with multiple ${labels.productPlural.toLowerCase()}.`}
+        subtitle="Build one customer order with multiple products."
         onBack={() => navigate('home')}
       />
 
@@ -438,9 +341,9 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
               sx={{ justifyContent: 'space-between', alignItems: 'center' }}
             >
               <Box>
-                <Typography variant="h6">Add {labels.productPlural.toLowerCase()}</Typography>
+                <Typography variant="h6">Add products</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Add each variant to the cart before saving.
+                  Add each size and color to the cart before saving.
                 </Typography>
               </Box>
               <FormControlLabel
@@ -459,53 +362,47 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
 
             <Box className="form-grid" sx={{ mt: 2 }}>
               <FormControl className="span-3">
-                <InputLabel>{labels.product}</InputLabel>
+                <InputLabel>Type</InputLabel>
                 <Select
-                  label={labels.product}
-                  value={lineDraft.productId}
-                  onChange={(event) => updateLine('productId', event.target.value)}
+                  label="Type"
+                  value={lineDraft.type}
+                  onChange={(event) => updateLine('type', event.target.value)}
                 >
-                  {activeProducts.map((product) => (
-                    <MenuItem key={product.id} value={product.id}>
-                      {product.name}
+                  {data.productTypes.map((type) => (
+                    <MenuItem key={type} value={type}>
+                      {type}
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
-              {productOptionTree.levels.length > 0 ? (
-                <>
-                  {productOptionTree.levels.map((level, levelIndex) => {
-                    const options = optionValuesForLevel(
-                      productOptionTree,
-                      levelIndex,
-                      levelIndex === 0 ? null : lineDraft.optionValueIds[levelIndex - 1],
-                    )
-                    const disabled = levelIndex > 0 && !lineDraft.optionValueIds[levelIndex - 1]
-                    return (
-                      <FormControl key={level.id} className="span-3" disabled={disabled}>
-                        <InputLabel>{level.label}</InputLabel>
-                        <Select
-                          label={level.label}
-                          value={lineDraft.optionValueIds[levelIndex] || ''}
-                          onChange={(event) => updateLine(`optionValueId:${levelIndex}`, event.target.value)}
-                        >
-                          {options.map((value) => (
-                            <MenuItem key={value.id} value={value.id}>
-                              {value.label}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    )
-                  })}
-                  <TextField
-                    className="span-3"
-                    label="Variant"
-                    value={selectedVariant ? variantDisplayName(selectedVariant) : ''}
-                    disabled
-                  />
-                </>
-              ) : null}
+              <FormControl className="span-3">
+                <InputLabel>Size</InputLabel>
+                <Select
+                  label="Size"
+                  value={lineDraft.size}
+                  onChange={(event) => updateLine('size', event.target.value)}
+                >
+                  {SIZE_OPTIONS.map((size) => (
+                    <MenuItem key={size} value={size}>
+                      {size}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl className="span-3">
+                <InputLabel>Color</InputLabel>
+                <Select
+                  label="Color"
+                  value={lineDraft.color}
+                  onChange={(event) => updateLine('color', event.target.value)}
+                >
+                  {data.productColors.map((color) => (
+                    <MenuItem key={color} value={color}>
+                      {color}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
               <TextField
                 className="span-3"
                 type="number"
@@ -567,10 +464,10 @@ export default function OrderPage({ navigate, requireAuth = () => false }) {
                   <Box>
                     <Typography fontWeight={800}>{item.type}</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {item.variantName || [item.size, item.color].filter(Boolean).join(' / ')} · {item.quantity} × {formatKs(item.unitPrice)}
+                      {item.size} · {item.color} · {item.quantity} × {formatKs(item.unitPrice)}
                     </Typography>
                   </Box>
-                  <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                  <Stack direction="row" alignItems="center" gap={1}>
                     <Typography fontWeight={800}>{formatKs(item.lineTotal)}</Typography>
                     <IconButton
                       aria-label={`Remove ${item.type}`}

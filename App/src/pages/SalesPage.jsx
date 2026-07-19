@@ -36,6 +36,7 @@ import TaskAltRoundedIcon from '@mui/icons-material/TaskAltRounded'
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded'
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
 import PageHeader from '../components/PageHeader.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
@@ -43,6 +44,7 @@ import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
 import {
   cancelOrderAtomic,
+  deleteOrderDocument,
   fulfillPreorderAtomic,
   setOrderFulfillmentStatus,
 } from '../services/shopApiService.js'
@@ -54,10 +56,16 @@ import {
   orderSearchText,
 } from '../domain/orders.js'
 import useSessionState from '../hooks/useSessionState.js'
-import { normalizeCatalogSettings } from '../utils/catalog.js'
 
 const filters = ['all', 'reserved', 'completed', 'paid', 'unpaid', 'refunded', 'preorder', 'cancelled']
 const filterLabel = (value) => value[0].toUpperCase() + value.slice(1)
+
+function matchesPaymentFilter(order, value) {
+  if (value === 'unpaid') {
+    return order.paymentStatus === 'unpaid' && order.fulfillmentStatus !== 'cancelled'
+  }
+  return order.paymentStatus === value
+}
 
 function statusColor(status) {
   if (status === 'completed') return 'success'
@@ -71,7 +79,7 @@ function ItemsSummary({ order }) {
     <Stack spacing={0.25}>
       {order.items.slice(0, 2).map((item) => (
         <Typography key={item.id} variant="body2">
-          {item.quantity}× {item.type} · {item.variantName || [item.size, item.color].filter(Boolean).join(' / ')}
+          {item.quantity}× {item.type} · {item.size} · {item.color}
         </Typography>
       ))}
       {order.items.length > 2 ? (
@@ -88,7 +96,6 @@ export default function SalesPage({ navigate }) {
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
-  const catalog = useMemo(() => normalizeCatalogSettings(data.catalogSettings), [data.catalogSettings])
   const [view, setView] = useSessionState('sales:view', {
     filter: 'all',
     search: '',
@@ -103,6 +110,7 @@ export default function SalesPage({ navigate }) {
   const setTo = (value) => setView((current) => ({ ...current, to: value }))
   const setSource = (value) => setView((current) => ({ ...current, source: value }))
   const [cancelTarget, setCancelTarget] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const [detailsOrder, setDetailsOrder] = useState(null)
   const [workingId, setWorkingId] = useState('')
 
@@ -119,7 +127,7 @@ export default function SalesPage({ navigate }) {
           item === 'all'
             ? orders.length
             : ['paid', 'unpaid', 'refunded'].includes(item)
-              ? orders.filter((order) => order.paymentStatus === item).length
+              ? orders.filter((order) => matchesPaymentFilter(order, item)).length
               : orders.filter((order) => order.fulfillmentStatus === item).length,
         ]),
       ),
@@ -129,7 +137,7 @@ export default function SalesPage({ navigate }) {
     const term = search.trim().toLowerCase()
     return orders
       .filter((order) => {
-        if (['paid', 'unpaid', 'refunded'].includes(filter) && order.paymentStatus !== filter) {
+        if (['paid', 'unpaid', 'refunded'].includes(filter) && !matchesPaymentFilter(order, filter)) {
           return false
         }
         if (
@@ -196,14 +204,26 @@ export default function SalesPage({ navigate }) {
     setCancelTarget(null)
   }
 
+  const confirmDelete = async () => {
+    const order = deleteTarget
+    if (!order) return
+    await run(
+      order,
+      () => deleteOrderDocument(user.uid, order),
+      'Order deleted.',
+    )
+    if (detailsOrder?.id === order.id) setDetailsOrder(null)
+    setDeleteTarget(null)
+  }
+
   const printSales = async () => {
     const { printSalesReport } = await import('../utils/reports.js')
-    printSalesReport(filteredOrders, catalog)
+    printSalesReport(filteredOrders)
   }
 
   const printReceipt = async (order) => {
     const { printOrderReceipt } = await import('../utils/reports.js')
-    printOrderReceipt(order, catalog)
+    printOrderReceipt(order)
   }
 
   return (
@@ -318,6 +338,7 @@ export default function SalesPage({ navigate }) {
               onToggle={() => toggleCompleted(order)}
               onFulfill={() => fulfillPreorder(order)}
               onCancel={() => setCancelTarget(order)}
+              onDelete={() => setDeleteTarget(order)}
               onView={() => setDetailsOrder(order)}
             />
           ))}
@@ -386,6 +407,7 @@ export default function SalesPage({ navigate }) {
                       onToggle={() => toggleCompleted(order)}
                       onFulfill={() => fulfillPreorder(order)}
                       onCancel={() => setCancelTarget(order)}
+                      onDelete={() => setDeleteTarget(order)}
                       onView={() => setDetailsOrder(order)}
                     />
                   </TableCell>
@@ -415,7 +437,7 @@ export default function SalesPage({ navigate }) {
           sx={{ justifyContent: 'space-between' }}
         >
           <Typography>
-            <strong>{filteredOrders.length}</strong> orders - <strong>{totals.quantity}</strong> items
+            <strong>{filteredOrders.length}</strong> orders · <strong>{totals.quantity}</strong> items
           </Typography>
           <Typography fontWeight={900}>Total: {formatKs(totals.amount)}</Typography>
         </Stack>
@@ -431,6 +453,16 @@ export default function SalesPage({ navigate }) {
         onConfirm={confirmCancel}
       />
 
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete order?"
+        message="Only cancelled unpaid orders can be deleted. This removes the order from sales records while keeping the audit record."
+        confirmLabel="Delete order"
+        busy={Boolean(deleteTarget && workingId === deleteTarget.id)}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
+
       <OrderDetailsDrawer
         order={detailsOrder}
         mobile={mobile}
@@ -441,7 +473,7 @@ export default function SalesPage({ navigate }) {
   )
 }
 
-function MobileOrderCard({ order, busy, onPrint, onToggle, onFulfill, onCancel, onView }) {
+function MobileOrderCard({ order, busy, onPrint, onToggle, onFulfill, onCancel, onDelete, onView }) {
   const [menuAnchor, setMenuAnchor] = useState(null)
   const active = order.fulfillmentStatus !== 'cancelled'
   const preorder = order.fulfillmentStatus === 'preorder'
@@ -454,7 +486,7 @@ function MobileOrderCard({ order, busy, onPrint, onToggle, onFulfill, onCancel, 
             {order.customer.name || 'Unnamed customer'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {order.date} - {order.customer.phone || 'No phone'}
+            {order.date} · {order.customer.phone || 'No phone'}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             #{order.id.slice(0, 10)}
@@ -526,9 +558,21 @@ function MobileOrderCard({ order, busy, onPrint, onToggle, onFulfill, onCancel, 
             {order.fulfillmentStatus === 'completed' ? 'Reopen' : 'Complete'}
           </Button>
         ) : (
-          <Button size="small" variant="outlined" startIcon={<PrintRoundedIcon />} onClick={onPrint} sx={{ flex: 1 }}>
-            Receipt
-          </Button>
+          <>
+            <Button size="small" variant="outlined" startIcon={<PrintRoundedIcon />} onClick={onPrint} sx={{ flex: 1 }}>
+              Receipt
+            </Button>
+            <Button
+              size="small"
+              color="error"
+              variant="outlined"
+              startIcon={<DeleteOutlineRoundedIcon />}
+              onClick={onDelete}
+              disabled={busy}
+            >
+              Delete order
+            </Button>
+          </>
         )}
 
         {active ? (
@@ -584,7 +628,7 @@ function MobileOrderCard({ order, busy, onPrint, onToggle, onFulfill, onCancel, 
   )
 }
 
-function DesktopOrderActions({ order, busy, onPrint, onToggle, onFulfill, onCancel, onView }) {
+function DesktopOrderActions({ order, busy, onPrint, onToggle, onFulfill, onCancel, onDelete, onView }) {
   return (
     <Stack direction="row" gap={0.25} sx={{ justifyContent: 'center', whiteSpace: 'nowrap' }}>
       <Tooltip title="View full order details">
@@ -644,7 +688,21 @@ function DesktopOrderActions({ order, busy, onPrint, onToggle, onFulfill, onCanc
             </IconButton>
           </span>
         </Tooltip>
-      ) : null}
+      ) : (
+        <Tooltip title="Delete order">
+          <span>
+            <IconButton
+              size="small"
+              color="error"
+              aria-label="Delete order"
+              onClick={onDelete}
+              disabled={busy}
+            >
+              <DeleteOutlineRoundedIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
     </Stack>
   )
 }
@@ -655,7 +713,7 @@ function DetailField({ label, value }) {
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
-      <Typography sx={{ overflowWrap: 'anywhere' }}>{value || '-'}</Typography>
+      <Typography sx={{ overflowWrap: 'anywhere' }}>{value || '—'}</Typography>
     </Box>
   )
 }
@@ -683,7 +741,7 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
                 Order details
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                #{order.id} - {order.date}
+                #{order.id} · {order.date}
               </Typography>
             </Box>
             <IconButton aria-label="Close order details" onClick={onClose}>
@@ -739,10 +797,10 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
                       {index + 1}. {item.type}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {item.variantName || [item.size, item.color].filter(Boolean).join(' / ')}
+                      {item.size} · {item.color}
                     </Typography>
                     <Typography variant="body2">
-                      {item.quantity} x {formatKs(item.unitPrice)}
+                      {item.quantity} × {formatKs(item.unitPrice)}
                     </Typography>
                     {item.discount ? (
                       <Typography variant="caption" color="text.secondary">
@@ -798,4 +856,3 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
     </Drawer>
   )
 }
-

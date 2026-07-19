@@ -36,6 +36,6 @@ export interface Order {
   paymentStatus: 'unpaid' | 'paid' | 'refunded'
   source: string
   remark: string
-  createdAt?: string | Date
-  updatedAt?: string | Date
+  createdAt?: unknown
+  updatedAt?: unknown
 }

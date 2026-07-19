@@ -45,9 +45,8 @@ import {
   getReceivedByMethod,
   getToday,
 } from '../utils/storage.js'
-import { catalogLabels, normalizeCatalogSettings } from '../utils/catalog.js'
 
-const fallbackExpenseTypes = ['General', 'Operations', 'Marketing']
+const fallbackExpenseTypes = ['Elegence', 'Long', 'Short']
 
 const emptyExpenseForm = {
   title: '',
@@ -86,8 +85,6 @@ export default function BalancePage({ refresh }) {
   const { data } = useData()
   const { notify } = useFeedback()
   const state = useMemo(() => buildProfitState(data), [data])
-  const catalog = useMemo(() => normalizeCatalogSettings(data.catalogSettings), [data.catalogSettings])
-  const labels = useMemo(() => catalogLabels(catalog), [catalog])
   const typeOptions = state.productTypes.length ? state.productTypes : fallbackExpenseTypes
   const [expenseForm, setExpenseForm] = useState({
     ...emptyExpenseForm,
@@ -182,7 +179,7 @@ export default function BalancePage({ refresh }) {
     <Box className="page-stack">
       <PageHeader
         title="Profit / Expense / Balance"
-        subtitle={`Track income, expenses, balance by payment method, and profit by ${labels.product.toLowerCase()}.`}
+        subtitle="Track income, expenses, balance by payment method, and profit by product type."
       />
 
       <div className="metric-grid">
@@ -225,7 +222,7 @@ export default function BalancePage({ refresh }) {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Profit by {labels.product}
+          Profit by Product Type
         </Typography>
         <Box className="mobile-data-list">
           {Object.entries(typeProfit).map(([type, data]) => {
@@ -256,7 +253,7 @@ export default function BalancePage({ refresh }) {
           <Table className="nowrap-table" size="small" stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell>{labels.product}</TableCell>
+                <TableCell>Type</TableCell>
                 <TableCell align="right">Income</TableCell>
                 <TableCell align="right">Expense</TableCell>
                 <TableCell align="right">Profit / Loss</TableCell>
@@ -316,8 +313,8 @@ export default function BalancePage({ refresh }) {
             onChange={(event) => updateExpenseForm('amount', event.target.value)}
           />
           <FormControl className="span-3">
-            <InputLabel>{labels.product}</InputLabel>
-            <Select label={labels.product} value={expenseForm.type} onChange={(event) => updateExpenseForm('type', event.target.value)}>
+            <InputLabel>Type</InputLabel>
+            <Select label="Type" value={expenseForm.type} onChange={(event) => updateExpenseForm('type', event.target.value)}>
               {typeOptions.map((type) => (
                 <MenuItem key={type} value={type}>
                   {type}
@@ -407,7 +404,7 @@ export default function BalancePage({ refresh }) {
               <TableHead>
                 <TableRow>
                   <TableCell>Title</TableCell>
-                  <TableCell>{labels.product}</TableCell>
+                  <TableCell>Type</TableCell>
                   <TableCell>Method</TableCell>
                   <TableCell align="right">Amount</TableCell>
                   <TableCell>Date</TableCell>

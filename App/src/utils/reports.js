@@ -1,5 +1,4 @@
-import { formatKs } from './storage.js'
-import { catalogLabels, normalizeCatalogSettings } from './catalog.js'
+﻿import { formatKs } from './storage.js'
 import {
   deductionLabel,
   getOrderQuantity,
@@ -33,18 +32,19 @@ function table(headers, rows) {
 }
 
 function reportShell(title, body, meta = '') {
+  const brand = document.title && document.title !== 'Vite + React' ? document.title : 'Shop Owner'
   return `
     <section class="print-document">
       <header class="print-header">
         <div>
-          <div class="print-brand">Shop POS</div>
+          <div class="print-brand">${escapeHtml(brand)}</div>
           <h1>${escapeHtml(title)}</h1>
           ${meta ? `<p>${escapeHtml(meta)}</p>` : ''}
         </div>
         <div class="print-date">${escapeHtml(new Date().toLocaleString())}</div>
       </header>
       ${body}
-      <footer class="print-footer">Shop POS - Generated report</footer>
+      <footer class="print-footer">${escapeHtml(brand)} POS - Generated report</footer>
     </section>
   `
 }
@@ -65,10 +65,9 @@ function printHtml(html) {
   window.setTimeout(cleanup, 60_000)
 }
 
-export function printSalesReport(rawOrders, settings = {}) {
+export function printSalesReport(rawOrders) {
   const orders = normalizeOrders(rawOrders)
   if (!orders.length) throw new Error('There are no orders to print.')
-  const labels = catalogLabels(normalizeCatalogSettings(settings))
 
   const rows = orders.flatMap((order) =>
     order.items.map((item, itemIndex) => [
@@ -76,8 +75,8 @@ export function printSalesReport(rawOrders, settings = {}) {
       itemIndex === 0 ? order.customer.name : '',
       itemIndex === 0 ? order.customer.phone : '',
       item.type,
-      item.variantName || item.size,
-      item.variantName ? '' : item.color,
+      item.size,
+      item.color,
       item.quantity,
       formatKs(item.unitPrice),
       formatKs(item.lineTotal),
@@ -96,9 +95,9 @@ export function printSalesReport(rawOrders, settings = {}) {
           'Date',
           'Customer',
           'Phone',
-          labels.product,
-          labels.option1,
-          labels.option2,
+          'Product',
+          'Size',
+          'Color',
           'Qty',
           'Unit price',
           'Line total',
@@ -116,12 +115,11 @@ export function printSalesReport(rawOrders, settings = {}) {
   )
 }
 
-export function printOrderReceipt(rawOrder, settings = {}) {
+export function printOrderReceipt(rawOrder) {
   const order = normalizeOrder(rawOrder)
-  const labels = catalogLabels(normalizeCatalogSettings(settings))
   const itemRows = order.items.map((item) => [
     item.type,
-    item.variantName || `${item.size} / ${item.color}`,
+    `${item.size} / ${item.color}`,
     item.quantity,
     formatKs(item.unitPrice),
     item.discount ? `${deductionLabel(item.deductionType)}: ${formatKs(item.discount)}` : '-',
@@ -142,7 +140,7 @@ export function printOrderReceipt(rawOrder, settings = {}) {
           )}</strong></div>
         </div>
         ${table(
-          [labels.product, 'Variant', 'Qty', 'Unit price', 'Deduction', 'Total'],
+          ['Product', 'Variant', 'Qty', 'Unit price', 'Deduction', 'Total'],
           itemRows,
         )}
         <div class="receipt-summary">
@@ -157,22 +155,21 @@ export function printOrderReceipt(rawOrder, settings = {}) {
         </div>
         ${order.remark ? `<p class="print-note"><strong>Remark:</strong> ${escapeHtml(order.remark)}</p>` : ''}
       `,
-      `${order.fulfillmentStatus} · ${order.paymentStatus}`,
+      `${order.fulfillmentStatus} Â· ${order.paymentStatus}`,
     ),
   )
 }
 
-export function printStockReport(rows, totals, settings = {}) {
-  const labels = catalogLabels(normalizeCatalogSettings(settings))
+export function printStockReport(rows, totals) {
   printHtml(
     reportShell(
       'Stock Report',
       `${table(
         [
           'Date',
-          labels.product,
-          labels.option1,
-          labels.option2,
+          'Product',
+          'Size',
+          'Color',
           'Cost',
           'Sale price',
           'Stock',
@@ -183,8 +180,8 @@ export function printStockReport(rows, totals, settings = {}) {
         rows.map((row) => [
           row.date,
           row.type,
-          row.variantName || row.size,
-          row.variantName ? '' : row.color,
+          row.size,
+          row.color,
           formatKs(row.unitCost ?? row.price),
           formatKs(row.salePrice ?? row.price),
           row.adjustedQty,
@@ -258,4 +255,3 @@ export const exportSalesPDF = printSalesReport
 export const exportStockPDF = printStockReport
 export const exportBalancePDF = printBalanceReport
 export const exportExpensePDF = printExpenseReport
-

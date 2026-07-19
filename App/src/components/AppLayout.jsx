@@ -41,16 +41,7 @@ const navItems = [
   { key: 'order', label: 'Order', icon: <AddShoppingCartRoundedIcon /> },
 ]
 
-export default function AppLayout({
-  page,
-  onNavigate,
-  onLogout,
-  onGetStarted,
-  preview = false,
-  userEmail,
-  shopName = 'Shop Owner',
-  children,
-}) {
+export default function AppLayout({ page, onNavigate, onLogout, userEmail, shopName = 'Shop Owner', children }) {
   const desktop = useMediaQuery('(min-width:768px)')
   const current = navItems.find((item) => item.key === page) || navItems[0]
   const [moreAnchor, setMoreAnchor] = useState(null)
@@ -95,24 +86,22 @@ export default function AppLayout({
             {shopName}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, mr: 1.5 }}>
-            {preview ? 'Read-only preview' : userEmail}
+            {userEmail}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', md: 'block' }, mr: 1.5 }}>
             {current.label}
           </Typography>
-          {!preview ? (
-            <Box sx={{ display: { xs: 'none', sm: 'block' }, mr: 1 }}>
-              <BackupButton compact />
-            </Box>
-          ) : null}
+          <Box sx={{ display: { xs: 'none', sm: 'block' }, mr: 1 }}>
+            <BackupButton compact />
+          </Box>
           <Button
             size="small"
-            variant={preview ? 'contained' : 'outlined'}
-            startIcon={preview ? null : <LogoutRoundedIcon />}
-            onClick={preview ? onGetStarted : onLogout}
+            variant="outlined"
+            startIcon={<LogoutRoundedIcon />}
+            onClick={onLogout}
             sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
           >
-            {preview ? 'Get Started' : 'Logout'}
+            Logout
           </Button>
         </Toolbar>
       </AppBar>
@@ -137,7 +126,7 @@ export default function AppLayout({
                 {shopName}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Shop workspace
+                POS workspace
               </Typography>
             </Box>
           </Toolbar>
@@ -198,11 +187,9 @@ export default function AppLayout({
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        {!preview ? (
-          <Box sx={{ display: { xs: 'block', sm: 'none' }, px: 1, py: 0.5 }}>
-            <BackupButton compact />
-          </Box>
-        ) : null}
+        <Box sx={{ display: { xs: 'block', sm: 'none' }, px: 1, py: 0.5 }}>
+          <BackupButton compact />
+        </Box>
         {navItems
           .filter((item) => ['finance', 'balance'].includes(item.key))
           .map((item) => (
@@ -222,15 +209,14 @@ export default function AppLayout({
           ))}
         <MenuItem
           onClick={() => {
-            if (preview) onGetStarted()
-            else onLogout()
+            onLogout()
             setMoreAnchor(null)
           }}
         >
           <ListItemIcon>
             <LogoutRoundedIcon />
           </ListItemIcon>
-          {preview ? 'Get Started' : 'Logout'}
+          Logout
         </MenuItem>
       </Menu>
 
@@ -248,28 +234,19 @@ export default function AppLayout({
           icon={<AddShoppingCartRoundedIcon />}
           slotProps={{ tooltip: { title: 'New order' } }}
           onMouseEnter={() => preloadRoute('order')}
-          onClick={() => {
-            if (preview) onGetStarted()
-            else onNavigate('order')
-          }}
+          onClick={() => onNavigate('order')}
         />
         <SpeedDialAction
           icon={<Inventory2RoundedIcon />}
           slotProps={{ tooltip: { title: 'Stock' } }}
           onMouseEnter={() => preloadRoute('stock')}
-          onClick={() => {
-            if (preview) onGetStarted()
-            else onNavigate('stock')
-          }}
+          onClick={() => onNavigate('stock')}
         />
         <SpeedDialAction
           icon={<AccountBalanceWalletRoundedIcon />}
           slotProps={{ tooltip: { title: 'Payments' } }}
           onMouseEnter={() => preloadRoute('finance')}
-          onClick={() => {
-            if (preview) onGetStarted()
-            else onNavigate('finance')
-          }}
+          onClick={() => onNavigate('finance')}
         />
       </SpeedDial>
     </Box>

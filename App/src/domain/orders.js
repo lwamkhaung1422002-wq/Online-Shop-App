@@ -15,10 +15,6 @@ export const allocationSchema = z.object({
 
 export const orderItemSchema = z.object({
   id: z.string(),
-  productId: z.string().optional(),
-  variantId: z.string().nullable().optional(),
-  variantName: z.string().optional(),
-  optionPath: z.array(z.any()).default([]),
   type: z.string().default('-'),
   size: z.string().default('Other'),
   color: z.string().default('-'),
@@ -90,10 +86,6 @@ export function normalizeOrder(rawOrder) {
     ? rawOrder.items.map((item, index) => {
         const normalized = {
           id: String(item.id ?? `${id}-item-${index + 1}`),
-          productId: item.productId ? String(item.productId) : undefined,
-          variantId: item.variantId ? String(item.variantId) : null,
-          variantName: item.variantName || '',
-          optionPath: Array.isArray(item.optionPath) ? item.optionPath : [],
           type: item.type || '-',
           size: item.size || 'Other',
           color: item.color || '-',
@@ -109,10 +101,6 @@ export function normalizeOrder(rawOrder) {
     : [
         {
           id: `${id}-item-1`,
-          productId: rawOrder.productId ? String(rawOrder.productId) : undefined,
-          variantId: rawOrder.variantId ? String(rawOrder.variantId) : null,
-          variantName: rawOrder.variantName || '',
-          optionPath: Array.isArray(rawOrder.optionPath) ? rawOrder.optionPath : [],
           type: rawOrder.type || '-',
           size: rawOrder.size || 'Other',
           color: rawOrder.color || '-',

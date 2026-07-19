@@ -10,7 +10,7 @@ export default function PageSkeleton() {
       <Box className="metric-grid">
         {[1, 2, 3, 4].map((item) => (
           <Paper key={item} variant="outlined" sx={{ p: 2 }}>
-            <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+            <Stack direction="row" spacing={2} alignItems="center">
               <Skeleton variant="rounded" width={42} height={42} />
               <Box sx={{ flex: 1 }}>
                 <Skeleton variant="text" width="55%" />
@@ -26,3 +26,4 @@ export default function PageSkeleton() {
     </Box>
   )
 }
+

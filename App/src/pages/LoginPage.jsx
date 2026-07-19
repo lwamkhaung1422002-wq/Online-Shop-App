@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import {
   Alert,
   Box,
@@ -80,7 +80,7 @@ export default function LoginPage() {
           </Typography>
         </Box>
         <Typography variant="body2" sx={{ opacity: 0.72 }}>
-          Secure owner workspace · API-backed shop data
+          Secure owner workspace - API-backed shop data
         </Typography>
       </Box>
 

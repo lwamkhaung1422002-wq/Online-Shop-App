@@ -112,7 +112,7 @@ function getBalanceByMethod(appState) {
   return getReceivedByMethod(appState.payments, appState.orderById)
 }
 
-export default function HomePage({ navigate, requireAuth = () => false }) {
+export default function HomePage({ navigate }) {
   const { data } = useData()
   const [filters, setFilters] = useSessionState('home:filters', {
     from: getToday(),
@@ -181,36 +181,28 @@ export default function HomePage({ navigate, requireAuth = () => false }) {
           <Button
             variant="contained"
             startIcon={<AddShoppingCartRoundedIcon />}
-            onClick={() => {
-              if (!requireAuth()) navigate('order')
-            }}
+            onClick={() => navigate('order')}
           >
             New Order
           </Button>
           <Button
             variant="outlined"
             startIcon={<AddBusinessRoundedIcon />}
-            onClick={() => {
-              if (!requireAuth()) navigate('stock')
-            }}
+            onClick={() => navigate('stock')}
           >
             Add Stock
           </Button>
           <Button
             variant="outlined"
             startIcon={<PaidRoundedIcon />}
-            onClick={() => {
-              if (!requireAuth()) navigate('finance')
-            }}
+            onClick={() => navigate('finance')}
           >
             Receive Payment
           </Button>
           <Button
             variant="outlined"
             startIcon={<PostAddRoundedIcon />}
-            onClick={() => {
-              if (!requireAuth()) navigate('balance')
-            }}
+            onClick={() => navigate('balance')}
           >
             Add Expense
           </Button>
