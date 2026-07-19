@@ -80,6 +80,7 @@ export default function OrderPage({ navigate, requireAuth }) {
   })
 
   const selectedProduct = data.products.find((product) => String(product.id) === String(lineDraft.productId))
+  const activeVariants = (selectedProduct?.variants || []).filter((variant) => variant.isActive !== false)
   const selectedVariant = selectedProduct?.variants?.find((variant) => String(variant.id) === String(lineDraft.variantId))
   const representativeStock = stockForVariant(data.stocks, lineDraft.productId, lineDraft.variantId)
   const availableMap = useMemo(() => getAvailableByVariant(data.stocks, data.orders), [data.orders, data.stocks])
@@ -264,20 +265,22 @@ export default function OrderPage({ navigate, requireAuth }) {
               ) : null}
             </Stack>
             <Box className="form-grid" sx={{ mt: 2 }}>
-              <FormControl className="span-6">
+              <FormControl className={activeVariants.length ? 'span-6' : 'span-12'}>
                 <InputLabel>Product</InputLabel>
                 <Select label="Product" value={lineDraft.productId} onChange={(event) => updateLineProduct(event.target.value)}>
                   {data.products.map((product) => <MenuItem key={product.id} value={product.id}>{product.name}</MenuItem>)}
                 </Select>
               </FormControl>
-              <FormControl className="span-6" disabled={!selectedProduct?.variants?.length}>
-                <InputLabel>Variant</InputLabel>
-                <Select label="Variant" value={lineDraft.variantId} onChange={(event) => updateLineVariant(event.target.value)}>
-                  {(selectedProduct?.variants || []).filter((variant) => variant.isActive !== false).map((variant) => (
-                    <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              {activeVariants.length ? (
+                <FormControl className="span-6">
+                  <InputLabel>Variant</InputLabel>
+                  <Select label="Variant" value={lineDraft.variantId} onChange={(event) => updateLineVariant(event.target.value)}>
+                    {activeVariants.map((variant) => (
+                      <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              ) : null}
               <TextField className="span-4" type="number" label="Quantity" value={lineDraft.quantity} onChange={(event) => setLineDraft((current) => ({ ...current, quantity: event.target.value }))} slotProps={{ htmlInput: { min: 1 } }} />
               <TextField className="span-4" type="number" label="Unit price" value={lineDraft.unitPrice} onChange={(event) => setLineDraft((current) => ({ ...current, unitPrice: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
               <TextField className="span-4" type="number" label="Advanced payment" value={lineDraft.discount} onChange={(event) => setLineDraft((current) => ({ ...current, discount: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />

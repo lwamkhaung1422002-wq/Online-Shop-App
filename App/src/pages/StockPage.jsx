@@ -163,6 +163,7 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
 
   const { rows, totals } = useMemo(() => buildRows(state, search), [search, state])
   const selectedProduct = data.products.find((product) => String(product.id) === String(stockForm.productId))
+  const activeVariants = (selectedProduct?.variants || []).filter((variant) => variant.isActive !== false)
   const selectedVariant = selectedProduct?.variants?.find((variant) => String(variant.id) === String(stockForm.variantId))
 
   const openStockDialog = () => {
@@ -407,7 +408,7 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
             </Alert>
           ) : null}
           <Box className="form-grid" sx={{ pt: 1 }}>
-            <FormControl className="span-6">
+            <FormControl className={activeVariants.length ? 'span-6' : 'span-12'}>
               <InputLabel>Product</InputLabel>
               <Select label="Product" value={stockForm.productId} onChange={(event) => updateProduct(event.target.value)}>
                 {data.products.map((product) => (
@@ -415,14 +416,16 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
                 ))}
               </Select>
             </FormControl>
-            <FormControl className="span-6" disabled={!selectedProduct?.variants?.length}>
-              <InputLabel>Final variant</InputLabel>
-              <Select label="Final variant" value={stockForm.variantId} onChange={(event) => updateVariant(event.target.value)}>
-                {(selectedProduct?.variants || []).filter((variant) => variant.isActive !== false).map((variant) => (
-                  <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            {activeVariants.length ? (
+              <FormControl className="span-6">
+                <InputLabel>Final variant</InputLabel>
+                <Select label="Final variant" value={stockForm.variantId} onChange={(event) => updateVariant(event.target.value)}>
+                  {activeVariants.map((variant) => (
+                    <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ) : null}
             <TextField className="span-4" type="date" label="Received Date" value={stockForm.date} onChange={(event) => setStockForm((current) => ({ ...current, date: event.target.value }))} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField className="span-4" type="number" label="Unit Cost" value={stockForm.unitCost} onChange={(event) => setStockForm((current) => ({ ...current, unitCost: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
             <TextField className="span-4" type="number" label="Sale Price" value={stockForm.salePrice} onChange={(event) => setStockForm((current) => ({ ...current, salePrice: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
