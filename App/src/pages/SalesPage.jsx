@@ -53,7 +53,6 @@ import {
   deductionLabel,
   getOrderQuantity,
   normalizeOrders,
-  orderSearchText,
 } from '../domain/orders.js'
 import useSessionState from '../hooks/useSessionState.js'
 
@@ -91,34 +90,26 @@ function ItemsSummary({ order }) {
   )
 }
 
-export default function SalesPage({ navigate, requireAuth }) {
+export default function SalesPage({ navigate, refresh, requireAuth }) {
   const mobile = useMediaQuery('(max-width:767px)')
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
   const [view, setView] = useSessionState('sales:view', {
     filter: 'all',
-    search: '',
     from: '',
     to: '',
-    source: '',
   })
-  const { filter, search, from, to, source } = view
+  const { filter, from, to } = view
   const setFilter = (value) => setView((current) => ({ ...current, filter: value }))
-  const setSearch = (value) => setView((current) => ({ ...current, search: value }))
   const setFrom = (value) => setView((current) => ({ ...current, from: value }))
   const setTo = (value) => setView((current) => ({ ...current, to: value }))
-  const setSource = (value) => setView((current) => ({ ...current, source: value }))
   const [cancelTarget, setCancelTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [detailsOrder, setDetailsOrder] = useState(null)
   const [workingId, setWorkingId] = useState('')
 
   const orders = useMemo(() => normalizeOrders(data.orders), [data.orders])
-  const sources = useMemo(
-    () => [...new Set(orders.map((order) => order.source).filter(Boolean))],
-    [orders],
-  )
   const filterCounts = useMemo(
     () =>
       Object.fromEntries(
@@ -134,7 +125,6 @@ export default function SalesPage({ navigate, requireAuth }) {
     [orders],
   )
   const filteredOrders = useMemo(() => {
-    const term = search.trim().toLowerCase()
     return orders
       .filter((order) => {
         if (['paid', 'unpaid', 'refunded'].includes(filter) && !matchesPaymentFilter(order, filter)) {
@@ -148,11 +138,10 @@ export default function SalesPage({ navigate, requireAuth }) {
         }
         if (from && order.date < from) return false
         if (to && order.date > to) return false
-        if (source && order.source !== source) return false
-        return !term || orderSearchText(order).includes(term)
+        return true
       })
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-  }, [filter, from, orders, search, source, to])
+  }, [filter, from, orders, to])
 
   const totals = filteredOrders.reduce(
     (summary, order) => ({
@@ -167,6 +156,7 @@ export default function SalesPage({ navigate, requireAuth }) {
     setWorkingId(order.id)
     try {
       await operation()
+      await refresh?.()
       notify(successMessage)
     } catch (error) {
       notify(error.message || 'The order could not be updated.', 'error')
@@ -251,16 +241,14 @@ export default function SalesPage({ navigate, requireAuth }) {
       />
 
       <Paper variant="outlined" className="section-card">
-        <Box className="form-grid">
+        <Box className="sales-date-toolbar">
+          <Box>
+            <Typography fontWeight={900}>Date filter</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Review orders within a date range.
+            </Typography>
+          </Box>
           <TextField
-            className="span-6"
-            label="Search customer, phone, item, or order ID"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            size="small"
-          />
-          <TextField
-            className="span-2"
             type="date"
             label="From"
             value={from}
@@ -269,7 +257,6 @@ export default function SalesPage({ navigate, requireAuth }) {
             size="small"
           />
           <TextField
-            className="span-2"
             type="date"
             label="To"
             value={to}
@@ -277,17 +264,6 @@ export default function SalesPage({ navigate, requireAuth }) {
             slotProps={{ inputLabel: { shrink: true } }}
             size="small"
           />
-          <FormControl className="span-2" size="small">
-            <InputLabel>Source</InputLabel>
-            <Select label="Source" value={source} onChange={(event) => setSource(event.target.value)}>
-              <MenuItem value="">All</MenuItem>
-              {sources.map((option) => (
-                <MenuItem key={option} value={option}>
-                  {option}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
         </Box>
         <Stack direction="row" gap={0.75} sx={{ mt: 2, flexWrap: 'wrap' }}>
           {['all', 'paid', 'unpaid', 'refunded', 'preorder', 'cancelled'].map((item) => (
@@ -805,7 +781,7 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
                     <Typography variant="body2">
                       {item.quantity} × {formatKs(item.unitPrice)}
                     </Typography>
-                    {item.discount ? (
+                    {item.discount && item.deductionType === 'discount' ? (
                       <Typography variant="caption" color="text.secondary">
                         {deductionLabel(item.deductionType)}: {formatKs(item.discount)}
                       </Typography>
@@ -830,6 +806,24 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
               <Typography color="text.secondary">Order discount</Typography>
               <Typography>{formatKs(order.discount)}</Typography>
             </Stack>
+            {order.advancedPaymentAmount ? (
+              <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
+                <Typography color="text.secondary">Advanced payment</Typography>
+                <Typography>{formatKs(order.advancedPaymentAmount)}</Typography>
+              </Stack>
+            ) : null}
+            {order.paidAmount ? (
+              <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
+                <Typography color="text.secondary">Paid amount</Typography>
+                <Typography>{formatKs(order.paidAmount)}</Typography>
+              </Stack>
+            ) : null}
+            {order.balanceDue ? (
+              <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
+                <Typography color="text.secondary">Balance due</Typography>
+                <Typography>{formatKs(order.balanceDue)}</Typography>
+              </Stack>
+            ) : null}
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
               <Typography color="text.secondary">Delivery fee</Typography>
               <Typography>{formatKs(order.deliveryFee)}</Typography>

@@ -30,7 +30,7 @@ describe('order model', () => {
   it('calculates line, order discount, delivery, and total', () => {
     const result = calculateOrderTotals(
       [
-        { unitPrice: 10000, quantity: 2, discount: 1000 },
+        { unitPrice: 10000, quantity: 2, discount: 1000, deductionType: 'discount' },
         { unitPrice: 5000, quantity: 1, discount: 0 },
       ],
       2000,
@@ -77,6 +77,7 @@ describe('order model', () => {
 
     expect(order.items[0].deductionType).toBe('discount')
     expect(order.items[1].deductionType).toBe('advance-payment')
-    expect(order.subtotal).toBe(39000)
+    expect(order.subtotal).toBe(44000)
+    expect(order.total).toBe(44000)
   })
 })

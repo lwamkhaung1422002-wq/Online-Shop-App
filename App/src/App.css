@@ -169,6 +169,13 @@
   vertical-align: top;
 }
 
+.sales-date-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px 170px;
+  gap: 12px;
+  align-items: center;
+}
+
 .mobile-data-list {
   display: none;
 }
@@ -412,6 +419,10 @@
 
   .desktop-order-table {
     display: none;
+  }
+
+  .sales-date-toolbar {
+    grid-template-columns: 1fr;
   }
 
   .mobile-order-list {

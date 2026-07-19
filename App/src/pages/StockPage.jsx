@@ -33,15 +33,29 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
-import { adjustStockBatch, createStockBatch, deleteStockBatch } from '../services/shopApiService.js'
+import {
+  adjustStockBatch,
+  createStockBatch,
+  createVariantDocument,
+  deleteStockBatch,
+  updateProductDocument,
+  updateVariantDocument,
+} from '../services/shopApiService.js'
 import { buildStockState, formatKs, getStockVariantKey, getToday } from '../utils/storage.js'
-import { variantDisplayName } from '../utils/catalog.js'
+import {
+  normalizeOptionTree,
+  optionPathFromValueIds,
+  optionPathSignature,
+  optionValuesForLevel,
+  valueIdsFromOptionPath,
+} from '../utils/catalog.js'
 import useSessionState from '../hooks/useSessionState.js'
 
 const emptyStockForm = {
   date: getToday(),
   productId: '',
   variantId: '',
+  optionValueIds: [],
   unitCost: '',
   salePrice: '',
   quantity: 1,
@@ -94,10 +108,16 @@ function buildRows(state, search) {
 
   const rows = Object.values(grouped)
     .map((row) => {
-      const sold = (state.soldQtyMap[getStockVariantKey(row)] || []).reduce(
+      const legacySold = (state.soldQtyMap[getStockVariantKey(row)] || []).reduce(
         (sum, item) => sum + Number(item.qty || 0),
         0,
       )
+      const allocatedSold = row.ids.reduce(
+        (sum, id) => sum + Number(state.soldBatchMap?.[id] || 0),
+        0,
+      )
+      const reservedSold = Number(row.reservedQuantity || 0)
+      const sold = allocatedSold || reservedSold || legacySold
       const adjustments = state.adjustmentMap[getStockVariantKey(row)] || []
       const adjusted = adjustments.reduce(
         (sum, item) => sum + (item.action === 'SUB' ? -1 : 1) * Number(item.qty || item.quantity || 0),
@@ -144,6 +164,18 @@ function stockTone(value) {
   return 'success'
 }
 
+function moneyOrBlank(value) {
+  const amount = Number(value ?? 0)
+  return amount > 0 ? amount : ''
+}
+
+function variantForPath(product, optionPath) {
+  const signature = optionPathSignature(optionPath)
+  return (product?.variants || []).find(
+    (variant) => variant.isActive !== false && optionPathSignature(variant.optionPath) === signature,
+  )
+}
+
 export default function StockPage({ refresh, requireAuth, navigate }) {
   const { user } = useAuth()
   const { data } = useData()
@@ -163,43 +195,73 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
 
   const { rows, totals } = useMemo(() => buildRows(state, search), [search, state])
   const selectedProduct = data.products.find((product) => String(product.id) === String(stockForm.productId))
-  const activeVariants = (selectedProduct?.variants || []).filter((variant) => variant.isActive !== false)
+  const optionTree = normalizeOptionTree(selectedProduct?.optionTree)
+  const selectedOptionPath = optionPathFromValueIds(optionTree, stockForm.optionValueIds)
   const selectedVariant = selectedProduct?.variants?.find((variant) => String(variant.id) === String(stockForm.variantId))
+    || variantForPath(selectedProduct, selectedOptionPath)
+  const hasOptions = optionTree.levels.length > 0
+  const allOptionsSelected = !hasOptions || optionTree.levels.every((_, index) => stockForm.optionValueIds[index])
 
   const openStockDialog = () => {
     if (requireAuth?.('add stock')) return
     const firstProduct = data.products[0]
-    const firstVariant = firstProduct?.variants?.[0]
+    const firstVariant = (firstProduct?.variants || []).find((variant) => variant.isActive !== false)
     setStockForm({
       ...emptyStockForm,
       productId: firstProduct?.id || '',
-      variantId: firstVariant?.id || '',
-      unitCost: firstVariant?.cost ?? firstProduct?.cost ?? '',
-      salePrice: firstVariant?.price ?? firstProduct?.price ?? '',
+      variantId: '',
+      optionValueIds: firstVariant ? valueIdsFromOptionPath(firstVariant.optionPath) : [],
+      unitCost: moneyOrBlank(firstVariant?.cost ?? firstProduct?.cost),
+      salePrice: moneyOrBlank(firstVariant?.price ?? firstProduct?.price),
     })
     setStockDialogOpen(true)
   }
 
   const updateProduct = (productId) => {
     const product = data.products.find((entry) => String(entry.id) === String(productId))
-    const variant = product?.variants?.[0]
+    const variant = (product?.variants || []).find((entry) => entry.isActive !== false)
     setStockForm((current) => ({
       ...current,
       productId,
-      variantId: variant?.id || '',
-      unitCost: variant?.cost ?? product?.cost ?? current.unitCost,
-      salePrice: variant?.price ?? product?.price ?? current.salePrice,
+      variantId: '',
+      optionValueIds: variant ? valueIdsFromOptionPath(variant.optionPath) : [],
+      unitCost: moneyOrBlank(variant?.cost ?? product?.cost ?? current.unitCost),
+      salePrice: moneyOrBlank(variant?.price ?? product?.price ?? current.salePrice),
     }))
   }
 
-  const updateVariant = (variantId) => {
-    const variant = selectedProduct?.variants?.find((entry) => String(entry.id) === String(variantId))
+  const updateOptionValue = (levelIndex, valueId) => {
+    const nextValueIds = [
+      ...stockForm.optionValueIds.slice(0, levelIndex),
+      valueId,
+      ...stockForm.optionValueIds.slice(levelIndex + 1),
+    ]
+    const path = optionPathFromValueIds(optionTree, nextValueIds)
+    const variant = path.length === optionTree.levels.length ? variantForPath(selectedProduct, path) : null
     setStockForm((current) => ({
       ...current,
-      variantId,
-      unitCost: variant?.cost ?? selectedProduct?.cost ?? current.unitCost,
-      salePrice: variant?.price ?? selectedProduct?.price ?? current.salePrice,
+      variantId: variant?.id || '',
+      optionValueIds: nextValueIds,
+      unitCost: moneyOrBlank(variant?.cost ?? selectedProduct?.cost ?? current.unitCost),
+      salePrice: moneyOrBlank(variant?.price ?? selectedProduct?.price ?? current.salePrice),
     }))
+  }
+
+  const resolveSelectedVariant = async () => {
+    if (!hasOptions) return null
+    const path = optionPathFromValueIds(optionTree, stockForm.optionValueIds)
+    if (path.length !== optionTree.levels.length) {
+      throw new Error('Select every option before saving stock.')
+    }
+    const existing = variantForPath(selectedProduct, path)
+    if (existing) return existing
+    const result = await createVariantDocument(user.uid, selectedProduct.id, {
+      name: path.map((entry) => entry.value).join(' / '),
+      price: Number(stockForm.salePrice || selectedProduct?.price || 0),
+      cost: Number(stockForm.unitCost || selectedProduct?.cost || 0),
+      optionPath: path,
+    })
+    return result.variant || result
   }
 
   const saveStock = async () => {
@@ -208,28 +270,44 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
       notify('Product, date, and quantity are required.', 'warning')
       return
     }
-    if (selectedProduct?.variants?.length && !stockForm.variantId) {
-      notify('Select the final variant before saving stock.', 'warning')
+    if (!allOptionsSelected) {
+      notify('Select every option before saving stock.', 'warning')
       return
     }
 
     try {
+      const resolvedVariant = await resolveSelectedVariant()
+      const nextCost = Number(stockForm.unitCost || resolvedVariant?.cost || selectedVariant?.cost || selectedProduct?.cost || 0)
+      const nextSalePrice = Number(stockForm.salePrice || resolvedVariant?.price || selectedVariant?.price || selectedProduct?.price || 0)
+      if (selectedProduct && !hasOptions) {
+        await updateProductDocument(user.uid, selectedProduct.id, {
+          ...selectedProduct,
+          cost: nextCost,
+          price: nextSalePrice,
+        })
+      } else if (selectedProduct && resolvedVariant) {
+        await updateVariantDocument(user.uid, selectedProduct.id, resolvedVariant.id, {
+          ...resolvedVariant,
+          cost: nextCost,
+          price: nextSalePrice,
+        })
+      }
       await createStockBatch(user.uid, {
         productId: stockForm.productId,
-        variantId: stockForm.variantId || undefined,
+        variantId: resolvedVariant?.id || stockForm.variantId || undefined,
         type: selectedProduct?.name,
-        size: selectedVariant?.optionPath?.[0]?.value || selectedVariant?.name || 'Default',
-        color: selectedVariant?.optionPath?.[1]?.value || '-',
+        size: resolvedVariant?.optionPath?.[0]?.value || selectedVariant?.optionPath?.[0]?.value || 'Default',
+        color: resolvedVariant?.optionPath?.[1]?.value || selectedVariant?.optionPath?.[1]?.value || '-',
         date: stockForm.date,
-        unitCost: Number(stockForm.unitCost || selectedVariant?.cost || selectedProduct?.cost || 0),
-        salePrice: Number(stockForm.salePrice || selectedVariant?.price || selectedProduct?.price || 0),
-        price: Number(stockForm.salePrice || selectedVariant?.price || selectedProduct?.price || 0),
+        unitCost: nextCost,
+        salePrice: nextSalePrice,
+        price: nextSalePrice,
         quantity: Number(stockForm.quantity || 0),
         deli: Number(stockForm.deli || 0),
       })
       notify('Stock batch added.')
       setStockDialogOpen(false)
-      refresh()
+      await refresh?.()
     } catch (error) {
       notify(error.message || 'Stock could not be added.', 'error')
     }
@@ -408,7 +486,7 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
             </Alert>
           ) : null}
           <Box className="form-grid" sx={{ pt: 1 }}>
-            <FormControl className={activeVariants.length ? 'span-6' : 'span-12'}>
+            <FormControl className="span-12">
               <InputLabel>Product</InputLabel>
               <Select label="Product" value={stockForm.productId} onChange={(event) => updateProduct(event.target.value)}>
                 {data.products.map((product) => (
@@ -416,16 +494,20 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
                 ))}
               </Select>
             </FormControl>
-            {activeVariants.length ? (
-              <FormControl className="span-6">
-                <InputLabel>Final variant</InputLabel>
-                <Select label="Final variant" value={stockForm.variantId} onChange={(event) => updateVariant(event.target.value)}>
-                  {activeVariants.map((variant) => (
-                    <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
+            {hasOptions ? optionTree.levels.map((level, index) => (
+              <FormControl key={level.id} className="span-4">
+                <InputLabel>{level.label}</InputLabel>
+                <Select
+                  label={level.label}
+                  value={stockForm.optionValueIds[index] || ''}
+                  onChange={(event) => updateOptionValue(index, event.target.value)}
+                >
+                  {optionValuesForLevel(optionTree, index).map((value) => (
+                    <MenuItem key={value.id} value={value.id}>{value.label}</MenuItem>
                   ))}
                 </Select>
               </FormControl>
-            ) : null}
+            )) : null}
             <TextField className="span-4" type="date" label="Received Date" value={stockForm.date} onChange={(event) => setStockForm((current) => ({ ...current, date: event.target.value }))} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField className="span-4" type="number" label="Unit Cost" value={stockForm.unitCost} onChange={(event) => setStockForm((current) => ({ ...current, unitCost: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
             <TextField className="span-4" type="number" label="Sale Price" value={stockForm.salePrice} onChange={(event) => setStockForm((current) => ({ ...current, salePrice: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />

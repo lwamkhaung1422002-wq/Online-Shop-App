@@ -135,16 +135,15 @@ export function getReservationBaseline(stocks = [], orders = []) {
 export function getAvailableByVariant(stocks = [], orders = []) {
   const totals = {}
   stocks.forEach((stock) => {
-      const key = getStockVariantKey(stock)
-    totals[key] = (totals[key] || 0) + Number(stock.quantity || 0)
+    const key = getStockVariantKey(stock)
+    totals[key] =
+      (totals[key] || 0) +
+      Number(stock.quantity || 0) -
+      Number(stock.reservedQuantity || 0)
   })
 
-  normalizeOrders(orders).forEach((order) => {
-    if (!isStockReserved(order)) return
-    order.items.forEach((item) => {
-      const key = getStockVariantKey(item)
-      totals[key] = (totals[key] || 0) - Number(item.quantity || 0)
-    })
+  Object.entries(getLegacyReservedByVariant(orders)).forEach(([key, quantity]) => {
+    totals[key] = (totals[key] || 0) - Number(quantity || 0)
   })
 
   return Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Math.max(0, value)]))

@@ -4,7 +4,11 @@ const numberField = z.coerce.number().finite().default(0)
 const deductionTypeSchema = z.enum(['discount', 'advance-payment']).default('discount')
 
 export function deductionLabel(type) {
-  return type === 'advance-payment' ? 'Advance Payment' : 'Line discount'
+  return type === 'advance-payment' ? 'Advanced payment' : 'Line discount'
+}
+
+export function lineDeductionAmount(item) {
+  return item?.deductionType === 'discount' ? Number(item.discount || 0) : 0
 }
 
 export const allocationSchema = z.object({
@@ -46,6 +50,9 @@ export const orderSchema = z.object({
   source: z.string().default(''),
   remark: z.string().default(''),
   paymentId: z.string().nullable().optional(),
+  paidAmount: numberField.optional(),
+  balanceDue: numberField.optional(),
+  advancedPaymentAmount: numberField.optional(),
   createdAt: z.any().optional(),
   updatedAt: z.any().optional(),
 })
@@ -53,7 +60,7 @@ export const orderSchema = z.object({
 export function lineTotal(item) {
   return Math.max(
     0,
-    Number(item.unitPrice || 0) * Number(item.quantity || 0) - Number(item.discount || 0),
+    Number(item.unitPrice || 0) * Number(item.quantity || 0) - lineDeductionAmount(item),
   )
 }
 
@@ -121,6 +128,7 @@ export function normalizeOrder(rawOrder) {
     rawOrder.discount || 0,
     rawOrder.deliveryFee || 0,
   )
+  const hasAdvancedPayment = items.some((item) => item.deductionType === 'advance-payment')
 
   const order = {
     ...rawOrder,
@@ -134,10 +142,12 @@ export function normalizeOrder(rawOrder) {
     },
     items,
     date: rawOrder.date || new Date().toISOString().slice(0, 10),
-    subtotal: Number(rawOrder.subtotal ?? calculated.subtotal),
+    subtotal: hasAdvancedPayment ? calculated.subtotal : Number(rawOrder.subtotal ?? calculated.subtotal),
     discount: Number(rawOrder.discount ?? calculated.discount),
     deliveryFee: Number(rawOrder.deliveryFee ?? calculated.deliveryFee),
-    total: Number(rawOrder.total ?? rawOrder.amount ?? calculated.total),
+    total: hasAdvancedPayment
+      ? calculated.total
+      : Number(rawOrder.total ?? rawOrder.amount ?? calculated.total),
     fulfillmentStatus: rawOrder.fulfillmentStatus || getLegacyStatus(rawOrder),
     paymentStatus:
       rawOrder.paymentStatus ||
@@ -145,6 +155,21 @@ export function normalizeOrder(rawOrder) {
     source: rawOrder.source || '',
     remark: rawOrder.remark || '',
     paymentId: rawOrder.paymentId ? String(rawOrder.paymentId) : null,
+    paidAmount: Math.max(0, Number(rawOrder.paidAmount || 0)),
+    balanceDue: Math.max(
+      0,
+      Number(
+        rawOrder.balanceDue ??
+          Math.max(
+            0,
+            (hasAdvancedPayment
+              ? calculated.total
+              : Number(rawOrder.total ?? rawOrder.amount ?? calculated.total)) -
+              Number(rawOrder.paidAmount || 0),
+          ),
+      ),
+    ),
+    advancedPaymentAmount: Math.max(0, Number(rawOrder.advancedPaymentAmount || 0)),
     _needsMigration: rawOrder.schemaVersion !== 2,
   }
 

@@ -15,7 +15,7 @@ export const defaultCatalogSettings = {
   ],
 }
 
-export const MAX_OPTION_LEVELS = 5
+export const MAX_OPTION_LEVELS = 3
 
 export function uniqueCatalogValues(values) {
   return [...new Set((values || []).map((value) => String(value).trim()).filter(Boolean))]
@@ -112,7 +112,7 @@ export function normalizeOptionTree(tree = {}) {
           id: String(value.id || '').trim(),
           label: String(value.label || '').trim(),
           level: Number(value.level || 0),
-          parentId: value.parentId ? String(value.parentId).trim() : null,
+          parentId: null,
         }))
         .filter((value) => value.id && value.label && value.level >= 0 && value.level < MAX_OPTION_LEVELS)
     : []
@@ -189,10 +189,10 @@ export function optionPathFromValueIds(tree, valueIds = []) {
   const valuesById = new Map(normalized.values.map((value) => [value.id, value]))
   const path = []
 
-  for (let index = 0; index < normalized.levels.length; index += 1) {
+  const depth = Math.min(valueIds.length, normalized.levels.length)
+  for (let index = 0; index < depth; index += 1) {
     const value = valuesById.get(valueIds[index])
     if (!value || value.level !== index) return []
-    if (index > 0 && value.parentId !== valueIds[index - 1]) return []
     path.push({
       level: index,
       label: normalized.levels[index].label,

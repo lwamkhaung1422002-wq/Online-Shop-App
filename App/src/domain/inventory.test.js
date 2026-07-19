@@ -85,5 +85,17 @@ describe('FIFO inventory', () => {
 
     expect(available[getVariantKey('Size 1', 'Black', 'Dress')]).toBe(2)
   })
-})
 
+  it('uses backend reserved stock as the availability source of truth', () => {
+    const available = getAvailableByVariant([
+      {
+        id: 'api-batch',
+        variantId: 'variant-1',
+        quantity: 5,
+        reservedQuantity: 3,
+      },
+    ])
+
+    expect(available['variant:variant-1']).toBe(2)
+  })
+})

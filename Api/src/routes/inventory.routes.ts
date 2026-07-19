@@ -52,11 +52,15 @@ function badRequest(message: string): Error {
 async function assertProductBelongsToShop(productId: string, shopId: string): Promise<void> {
   const product = await prisma.product.findFirst({
     where: { id: productId, shopId },
-    select: { id: true },
+    select: { id: true, isActive: true },
   });
 
   if (!product) {
     throw notFound("Product not found.");
+  }
+
+  if (!product.isActive) {
+    throw badRequest("Product has been removed from active selling.");
   }
 }
 

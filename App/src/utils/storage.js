@@ -118,11 +118,17 @@ export function buildStockState(source = readLocalData()) {
   const productTypes = source.productTypes || []
   const productColors = source.productColors || []
   const soldQtyMap = {}
+  const soldBatchMap = {}
   const adjustmentMap = {}
 
   normalizeOrders(source.orders?.length ? source.orders : flattenRecords(records)).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
+      item.allocations.forEach((allocation) => {
+        const batchId = String(allocation.stockBatchId || allocation.inventoryBatchId || '')
+        if (!batchId) return
+        soldBatchMap[batchId] = (soldBatchMap[batchId] || 0) + Number(allocation.quantity || 0)
+      })
       const key = getStockVariantKey(item)
       if (!soldQtyMap[key]) soldQtyMap[key] = []
       soldQtyMap[key].push({
@@ -138,7 +144,7 @@ export function buildStockState(source = readLocalData()) {
     adjustmentMap[key].push(adjustment)
   })
 
-  return { stocks, records, adjustments, productTypes, productColors, soldQtyMap, adjustmentMap }
+  return { stocks, records, adjustments, productTypes, productColors, soldQtyMap, soldBatchMap, adjustmentMap }
 }
 
 export function buildSalesState(source = readLocalData()) {
@@ -241,8 +247,10 @@ export function getReceivedByMethod(payments, orderById) {
       return
     }
     const order = orderById[payment.orderId]
-    if (!order || !order.received) return
-    map[payment.method] = (map[payment.method] || 0) + Number(payment.amount || order.amount || 0)
+    if (!order || order.fulfillmentStatus === 'cancelled') return
+    map[payment.method] =
+      (map[payment.method] || 0) +
+      Number(payment.amount ?? (order.paymentStatus === 'paid' ? order.total : 0) ?? 0)
   })
 
   return map

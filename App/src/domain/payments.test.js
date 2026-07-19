@@ -63,6 +63,14 @@ describe('payment references', () => {
       validatePaymentDetails({
         method: 'Cash',
         billNumber: '',
+        transactionId: '',
+        date: '2026-06-23',
+      }),
+    ).toBe('')
+    expect(
+      validatePaymentDetails({
+        method: 'Other',
+        billNumber: '',
         transactionId: '12345',
         date: '2026-06-23',
       }),

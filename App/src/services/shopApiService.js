@@ -99,9 +99,10 @@ function mapPayment(payment) {
 }
 
 function mapOrder(order, payments = []) {
-  const directPayment = payments.find(
-    (payment) => payment.orderId === order.id && payment.type === 'payment' && Number(payment.amount || 0) > 0,
+  const directPayments = payments.filter(
+    (payment) => payment.orderId === order.id && payment.type === 'payment',
   )
+  const directPayment = directPayments.find((payment) => Number(payment.amount || 0) > 0)
   const settlement = payments.find(
     (payment) => payment.scope === 'cod-settlement' && payment.orderIds?.map(String).includes(String(order.id)),
   )
@@ -109,6 +110,12 @@ function mapOrder(order, payments = []) {
     (payment) => payment.orderId === order.id && payment.type === 'refund',
   )
   const payment = directPayment || settlement || null
+  const directPaidAmount = directPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+  const settlementPaidAmount = settlement?.allocations?.find((allocation) => String(allocation.orderId) === String(order.id))?.amount || 0
+  const paidAmount = Math.max(0, directPaidAmount + Number(settlementPaidAmount || 0))
+  const advancedPaymentAmount = directPayments
+    .filter((payment) => /advanced payment/i.test(String(payment.note || '')))
+    .reduce((sum, payment) => sum + Math.max(0, Number(payment.amount || 0)), 0)
 
   return {
     id: String(order.id),
@@ -144,6 +151,9 @@ function mapOrder(order, payments = []) {
     discount: Number(order.discount || 0),
     deliveryFee: Number(order.deliveryFee || 0),
     total: Number(order.total || 0),
+    paidAmount,
+    balanceDue: Math.max(0, Number(order.total || 0) - paidAmount),
+    advancedPaymentAmount,
     fulfillmentStatus: order.fulfillmentStatus || 'reserved',
     paymentStatus: order.paymentStatus || 'unpaid',
     source: order.source || '',
@@ -339,11 +349,12 @@ async function productVariantForLine(shopId, line, stocks = []) {
 
 function paymentPayload(details, amount) {
   const isCod = details.isCod ?? isCodPaymentMethod(details.method, details.settings || {})
+  const isCash = String(details.method || '').trim().toLowerCase() === 'cash'
   return {
     method: details.method,
-    amount,
+    amount: Number(details.amount || amount || 0),
     billNumber: isCod ? details.billNumber : undefined,
-    transactionId: details.transactionId,
+    transactionId: isCash ? undefined : details.transactionId,
     note: details.note,
     paidAt: details.date ? new Date(details.date).toISOString() : undefined,
   }
@@ -393,6 +404,10 @@ export async function updateProductDocument(uid, productId, product) {
     isActive: product.isActive,
     optionTree: normalizeOptionTree(product.optionTree),
   })
+}
+
+export async function deleteProductDocument(uid, productId) {
+  return api.deleteProduct(shopIdFrom(uid), productId)
 }
 
 export async function createVariantDocument(uid, productId, variant) {
@@ -463,7 +478,7 @@ export async function updateOrderDocument() {
 }
 
 export async function deleteOrderDocument(uid, order) {
-  return cancelOrderAtomic(uid, order.id, 'Order deleted by shop owner')
+  return api.deleteOrder(shopIdFrom(uid), order.id)
 }
 
 export async function cancelOrderAtomic(uid, orderId, reason = 'Order cancelled') {
@@ -521,7 +536,7 @@ export async function createStockBatch(uid, stock) {
       ? null
       : await ensureVariant(shopId, product, stock)
 
-  return api.createInventory(shopId, {
+  const inventory = await api.createInventory(shopId, {
     productId: product.id,
     variantId: variant?.id,
     quantity: Number(stock.quantity || 0),
@@ -529,6 +544,18 @@ export async function createStockBatch(uid, stock) {
     receivedAt: stock.date ? new Date(stock.date).toISOString() : undefined,
     note: stock.deli ? `Delivery cost: ${stock.deli}` : undefined,
   })
+
+  if (Number(stock.deli || 0) > 0) {
+    await api.createExpense(shopId, {
+      title: `Stock delivery - ${stock.type || 'Product'}`,
+      category: 'Stock Delivery',
+      amount: Number(stock.deli || 0),
+      spentAt: stock.date ? new Date(stock.date).toISOString() : undefined,
+      note: `Auto-recorded from Add Stock${inventory.inventoryBatch?.id ? ` (${inventory.inventoryBatch.id})` : ''}`,
+    })
+  }
+
+  return inventory
 }
 
 export async function deleteStockBatch(uid, stock) {

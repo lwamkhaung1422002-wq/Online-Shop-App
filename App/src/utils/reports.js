@@ -122,7 +122,9 @@ export function printOrderReceipt(rawOrder) {
     `${item.size} / ${item.color}`,
     item.quantity,
     formatKs(item.unitPrice),
-    item.discount ? `${deductionLabel(item.deductionType)}: ${formatKs(item.discount)}` : '-',
+    item.discount && item.deductionType === 'discount'
+      ? `${deductionLabel(item.deductionType)}: ${formatKs(item.discount)}`
+      : '-',
     formatKs(item.lineTotal),
   ])
 
@@ -146,6 +148,21 @@ export function printOrderReceipt(rawOrder) {
         <div class="receipt-summary">
           <div><span>Subtotal</span><strong>${escapeHtml(formatKs(order.subtotal))}</strong></div>
           <div><span>Discount</span><strong>${escapeHtml(formatKs(order.discount))}</strong></div>
+          ${
+            order.advancedPaymentAmount
+              ? `<div><span>Advanced payment</span><strong>${escapeHtml(formatKs(order.advancedPaymentAmount))}</strong></div>`
+              : ''
+          }
+          ${
+            order.paidAmount
+              ? `<div><span>Paid amount</span><strong>${escapeHtml(formatKs(order.paidAmount))}</strong></div>`
+              : ''
+          }
+          ${
+            order.balanceDue
+              ? `<div><span>Balance due</span><strong>${escapeHtml(formatKs(order.balanceDue))}</strong></div>`
+              : ''
+          }
           <div><span>Delivery fee</span><strong>${escapeHtml(
             formatKs(order.deliveryFee),
           )}</strong></div>

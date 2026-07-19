@@ -13,7 +13,7 @@ const paramsSchema = z.object({
 });
 
 const moneySchema = z.coerce.number().int().nonnegative();
-const maxOptionLevels = 5;
+const maxOptionLevels = 3;
 
 const optionValueSchema = z.object({
   id: z.string().trim().min(1).max(80),
@@ -119,7 +119,7 @@ function normalizeOptionTree(input: z.infer<typeof optionTreeSchema>) {
       id: value.id.trim(),
       label: value.label.trim(),
       level: value.level,
-      parentId: value.parentId?.trim() || null,
+      parentId: null,
     };
 
     if (valueIds.has(normalized.id)) {
@@ -134,22 +134,11 @@ function normalizeOptionTree(input: z.infer<typeof optionTreeSchema>) {
     return normalized;
   });
 
-  const valuesById = new Map(values.map((value) => [value.id, value]));
   const siblingNames = new Set<string>();
   values.forEach((value) => {
-    if (value.level === 0 && value.parentId) {
-      throw badRequest("Parent option values cannot have a parent.");
-    }
-    if (value.level > 0) {
-      const parent = value.parentId ? valuesById.get(value.parentId) : null;
-      if (!parent || parent.level !== value.level - 1) {
-        throw badRequest("Child option values must belong to a valid parent option.");
-      }
-    }
-
-    const siblingKey = `${value.level}:${value.parentId ?? "__root"}:${value.label.toLowerCase()}`;
+    const siblingKey = `${value.level}:${value.label.toLowerCase()}`;
     if (siblingNames.has(siblingKey)) {
-      throw badRequest("Option values under the same parent must be unique.");
+      throw badRequest("Option values inside the same option group must be unique.");
     }
     siblingNames.add(siblingKey);
   });
@@ -197,10 +186,6 @@ function validateVariantPath(optionTree: unknown, optionPath: z.infer<typeof opt
         throw badRequest("Variant option path contains an invalid option value.");
       }
 
-      if (index > 0 && value.parentId !== sortedPath[index - 1]?.valueId) {
-        throw badRequest("Child option value does not belong to the selected parent option.");
-      }
-
       return {
         level: index,
         label: level.label,
@@ -241,7 +226,7 @@ productsRouter.get("/:shopId/products", async (request, response, next) => {
     await assertUserOwnsShop(authUser.id, shopId);
 
     const products = await prisma.product.findMany({
-      where: { shopId },
+      where: { shopId, isActive: true },
       include: {
         category: true,
         variants: true,
@@ -361,11 +346,46 @@ productsRouter.delete("/:shopId/products/:productId", async (request, response, 
     const productId = z.string().min(1).parse(request.params.productId);
 
     await assertUserOwnsShop(authUser.id, shopId);
-    await assertProductBelongsToShop(productId, shopId);
+    const product = await prisma.product.findFirst({
+      where: { id: productId, shopId },
+      include: {
+        inventory: true,
+        variants: true,
+      },
+    });
 
-    await prisma.product.delete({ where: { id: productId } });
+    if (!product) {
+      const error = new Error("Product not found.");
+      error.name = "NotFoundError";
+      throw error;
+    }
 
-    response.status(204).send();
+    const availableQuantity = product.inventory.reduce(
+      (sum, batch) => sum + Math.max(0, batch.quantity - batch.reservedQuantity),
+      0,
+    );
+
+    if (availableQuantity > 0) {
+      throw badRequest("Product cannot be removed while stock is still available.");
+    }
+
+    const removedProduct = await prisma.$transaction(async (tx) => {
+      await tx.productVariant.updateMany({
+        where: { productId },
+        data: { isActive: false, archivedAt: new Date() },
+      });
+
+      return tx.product.update({
+        where: { id: productId },
+        data: { isActive: false },
+        include: {
+          category: true,
+          variants: true,
+        },
+      });
+    });
+
+    response.status(200).json({ product: removedProduct, removed: true });
   } catch (error) {
     next(error);
   }

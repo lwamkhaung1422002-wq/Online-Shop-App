@@ -43,8 +43,8 @@ import useSessionState from '../hooks/useSessionState.js'
 function buildSalesSummary(orders, from, to) {
   const list = normalizeOrders(orders).filter(
     (order) =>
-      order.date >= from &&
-      order.date <= to &&
+      (!from || order.date >= from) &&
+      (!to || order.date <= to) &&
       !['preorder', 'cancelled'].includes(order.fulfillmentStatus),
   )
   const grouped = {}
@@ -112,10 +112,19 @@ function getBalanceByMethod(appState) {
   return getReceivedByMethod(appState.payments, appState.orderById)
 }
 
+function daysAgo(days) {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function HomePage({ navigate }) {
   const { data } = useData()
   const [filters, setFilters] = useSessionState('home:filters', {
-    from: getToday(),
+    from: daysAgo(30),
     to: getToday(),
   })
   const [details, setDetails] = useSessionState('home:details', {
@@ -138,19 +147,17 @@ export default function HomePage({ navigate }) {
     (order) => !['preorder', 'cancelled'].includes(order.fulfillmentStatus),
   )
   const totalSaleValue = activeOrders.reduce((sum, order) => sum + order.total, 0)
-  const cashReceived = activeOrders
-    .filter((order) => order.paymentStatus === 'paid')
-    .reduce((sum, order) => sum + order.total, 0)
-  const outstanding = Math.max(0, totalSaleValue - cashReceived)
   const totalBalance = Object.values(methodBalance).reduce((sum, value) => sum + value, 0)
+  const cashReceived = totalBalance
+  const outstanding = Math.max(0, totalSaleValue - cashReceived)
 
   return (
     <Box className="page-stack home-dashboard">
-      <PageHeader title="Home" subtitle="Today’s shop activity at a glance" />
+      <PageHeader title="Home" subtitle="Shop activity at a glance" />
 
       <Box className="home-primary-metrics">
         <MetricCard
-          title="Today’s Sales"
+          title="Sales"
           value={formatKs(salesSummary.totalAmount)}
           tone="primary"
           icon={<ReceiptLongRoundedIcon />}

@@ -26,12 +26,13 @@ export function paymentReferences(details) {
 export function validatePaymentDetails(details) {
   const methods = details.settings ? activePaymentMethods(details.settings).map((method) => method.name) : PAYMENT_METHODS
   const isCod = details.isCod ?? isCodPaymentMethod(details.method, details.settings || {})
+  const isCash = String(details.method || '').trim().toLowerCase() === 'cash'
   if (!methods.includes(details.method)) return 'Choose a valid payment method.'
   if (!details.date) return 'Payment date is required.'
   if (isCod && !/^\d{6}$/.test(String(details.billNumber || ''))) {
     return 'COD reference must be exactly 6 digits.'
   }
-  if (!/^\d{6}$/.test(String(details.transactionId || ''))) {
+  if (!isCash && !/^\d{6}$/.test(String(details.transactionId || ''))) {
     return 'Transaction ID must be exactly 6 digits.'
   }
   return ''
@@ -113,7 +114,25 @@ export function buildPaymentReconciliation(source = {}) {
     })
   })
 
+  const outstandingSum = (list) =>
+    list.reduce((total, order) => total + Number(order.balanceDue ?? order.total ?? 0), 0)
   const sum = (list) => list.reduce((total, order) => total + Number(order.total || 0), 0)
+  const paymentTotal = payments.reduce((total, payment) => {
+    if (payment.refunded || payment.type === 'refund' || payment.type === 'cod-settlement-void') {
+      return total
+    }
+    if (payment.scope === 'cod-settlement') return total + Number(payment.amount || 0)
+    const order = orderById[payment.orderId]
+    if (!order || order.fulfillmentStatus === 'cancelled') return total
+    return total + Number(payment.amount ?? (order.paymentStatus === 'paid' ? order.total : 0) ?? 0)
+  }, 0)
+  const paidOrderFallbackTotal = receivedOrders.reduce((total, order) => {
+    const hasPayment = payments.some((payment) => {
+      if (payment.orderId && String(payment.orderId) === String(order.id)) return true
+      return payment.orderIds?.map(String).includes(String(order.id))
+    })
+    return hasPayment ? total : total + Number(order.total || 0)
+  }, 0)
   return {
     orders,
     payments,
@@ -130,8 +149,8 @@ export function buildPaymentReconciliation(source = {}) {
     cancelledOrders: orders.filter((order) => order.fulfillmentStatus === 'cancelled'),
     anomalies,
     totals: {
-      outstanding: sum(outstandingOrders),
-      received: sum(receivedOrders),
+      outstanding: outstandingSum(outstandingOrders),
+      received: paymentTotal + paidOrderFallbackTotal,
       refunded: sum(refundedOrders),
     },
   }

@@ -34,7 +34,7 @@ describe('receipt printing', () => {
     vi.unstubAllGlobals()
   })
 
-  it('prints advance payment as the line deduction label', () => {
+  it('prints advanced payment as an order-level payment summary', () => {
     printOrderReceipt({
       id: 'order-1',
       customer: { name: 'Customer', phone: '091234567', city: 'Yangon', address: 'Street' },
@@ -48,16 +48,19 @@ describe('receipt printing', () => {
           quantity: 1,
           unitPrice: 25000,
           unitCost: 15000,
-          discount: 5000,
-          deductionType: 'advance-payment',
-          lineTotal: 20000,
+          discount: 0,
+          deductionType: 'discount',
+          lineTotal: 25000,
           allocations: [],
         },
       ],
-      subtotal: 20000,
+      subtotal: 25000,
       discount: 0,
       deliveryFee: 0,
-      total: 20000,
+      total: 25000,
+      paidAmount: 5000,
+      advancedPaymentAmount: 5000,
+      balanceDue: 20000,
       fulfillmentStatus: 'reserved',
       paymentStatus: 'unpaid',
       source: 'Telegram',
@@ -65,7 +68,10 @@ describe('receipt printing', () => {
     })
 
     expect(printedHtml).toContain('Deduction')
-    expect(printedHtml).toContain('Advance Payment: 5,000 Ks')
+    expect(printedHtml).toContain('Advanced payment')
+    expect(printedHtml).toContain('5,000 Ks')
+    expect(printedHtml).toContain('Balance due')
+    expect(printedHtml).toContain('20,000 Ks')
     expect(window.print).toHaveBeenCalled()
   })
 })

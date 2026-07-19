@@ -78,6 +78,8 @@ export const api = {
     apiRequest(`/shops/${shopId}/products`, { method: 'POST', body: payload }),
   updateProduct: (shopId, productId, payload) =>
     apiRequest(`/shops/${shopId}/products/${productId}`, { method: 'PATCH', body: payload }),
+  deleteProduct: (shopId, productId) =>
+    apiRequest(`/shops/${shopId}/products/${productId}`, { method: 'DELETE' }),
   createVariant: (shopId, productId, payload) =>
     apiRequest(`/shops/${shopId}/products/${productId}/variants`, { method: 'POST', body: payload }),
   updateVariant: (shopId, productId, variantId, payload) =>
@@ -107,6 +109,8 @@ export const api = {
     apiRequest(`/shops/${shopId}/orders/${orderId}/fulfill`, { method: 'POST', body: {} }),
   cancelOrder: (shopId, orderId, reason) =>
     apiRequest(`/shops/${shopId}/orders/${orderId}/cancel`, { method: 'POST', body: { reason } }),
+  deleteOrder: (shopId, orderId) =>
+    apiRequest(`/shops/${shopId}/orders/${orderId}`, { method: 'DELETE' }),
   payments: (shopId) => apiRequest(`/shops/${shopId}/payments`),
   receivePayment: (shopId, orderId, payload) =>
     apiRequest(`/shops/${shopId}/orders/${orderId}/payments`, { method: 'POST', body: payload }),

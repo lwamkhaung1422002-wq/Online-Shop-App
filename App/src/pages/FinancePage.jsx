@@ -72,7 +72,7 @@ export default function FinancePage({ refresh, requireAuth }) {
   const { data } = useData()
   const { notify } = useFeedback()
   const state = useMemo(() => buildFinanceState(data), [data])
-  const paymentMethods = activePaymentMethods(data.catalogSettings)
+  const paymentMethods = useMemo(() => activePaymentMethods(data.catalogSettings), [data.catalogSettings])
   const defaultCodMethod = paymentMethods.find((method) => method.type === 'cod')?.name || paymentMethods[0]?.name || 'COD'
   const [searchView, setSearchView] = useSessionState('finance:search', {
     type: 'all',
@@ -120,7 +120,11 @@ export default function FinancePage({ refresh, requireAuth }) {
 
   const methodBalance = getReceivedByMethod(state.payments, state.orderById)
   const totalBalance = Object.values(methodBalance).reduce((sum, value) => sum + value, 0)
-  const receiveIsCod = isCodPaymentMethod(receiveDraft.method, data.catalogSettings)
+  const selectedReceiveMethod = paymentMethods.some((method) => method.name === receiveDraft.method)
+    ? receiveDraft.method
+    : defaultCodMethod
+  const receiveIsCod = isCodPaymentMethod(selectedReceiveMethod, data.catalogSettings)
+  const receiveIsCash = String(selectedReceiveMethod || '').trim().toLowerCase() === 'cash'
 
   const openReceive = (order) => {
     setReceiveOrder(order)
@@ -130,7 +134,7 @@ export default function FinancePage({ refresh, requireAuth }) {
       method: defaultCodMethod,
       billNumber: '',
       transactionId: '',
-      amount: order.total,
+      amount: order.balanceDue || order.total,
       date: getToday(),
       note: '',
     })
@@ -138,8 +142,8 @@ export default function FinancePage({ refresh, requireAuth }) {
 
   const confirmReceive = async () => {
     if (requireAuth?.('receive payment')) return
-    const receiveIsCod = isCodPaymentMethod(receiveDraft.method, data.catalogSettings)
-    const validationError = validatePaymentDetails({ ...receiveDraft, settings: data.catalogSettings, isCod: receiveIsCod })
+    const receiveIsCod = isCodPaymentMethod(selectedReceiveMethod, data.catalogSettings)
+    const validationError = validatePaymentDetails({ ...receiveDraft, method: selectedReceiveMethod, settings: data.catalogSettings, isCod: receiveIsCod })
     if (validationError) {
       notify(validationError, 'warning')
       return
@@ -153,9 +157,9 @@ export default function FinancePage({ refresh, requireAuth }) {
         orderId: order.id,
         customerName: order.customer.name,
         phone: order.customer.phone,
-        amount: order.total,
+        amount: order.balanceDue || order.total,
       }))
-      const settlementError = validateCodSettlement(allocations, { ...receiveDraft, settings: data.catalogSettings, isCod: true })
+      const settlementError = validateCodSettlement(allocations, { ...receiveDraft, method: selectedReceiveMethod, settings: data.catalogSettings, isCod: true })
       if (settlementError) {
         notify(settlementError, 'warning')
         return
@@ -174,12 +178,12 @@ export default function FinancePage({ refresh, requireAuth }) {
             orderId: order.id,
             customerName: order.customer.name,
             phone: order.customer.phone,
-            amount: order.total,
+            amount: order.balanceDue || order.total,
           })),
-          { ...receiveDraft, amount: Number(receiveDraft.amount) },
+          { ...receiveDraft, method: selectedReceiveMethod, amount: Number(receiveDraft.amount) },
         )
       } else {
-        await receivePaymentAtomic(user.uid, receiveOrder.id, receiveDraft)
+        await receivePaymentAtomic(user.uid, receiveOrder.id, { ...receiveDraft, method: selectedReceiveMethod })
       }
       setReceiveOrder(null)
       notify('Payment received and recorded atomically.')
@@ -283,7 +287,7 @@ export default function FinancePage({ refresh, requireAuth }) {
   const selectedCodOrders = state.outstandingOrders.filter((order) =>
     selectedCodOrderIds.includes(order.id),
   )
-  const selectedCodTotal = selectedCodOrders.reduce((sum, order) => sum + order.total, 0)
+  const selectedCodTotal = selectedCodOrders.reduce((sum, order) => sum + Number(order.balanceDue || order.total || 0), 0)
 
   return (
     <Box className="page-stack finance-page">
@@ -377,7 +381,7 @@ export default function FinancePage({ refresh, requireAuth }) {
               </Box>
               <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
                 <Typography fontWeight={900} color="primary.main">
-                  {formatKs(order.total)}
+                  {formatKs(order.paymentStatus === 'unpaid' ? order.balanceDue || order.total : order.total)}
                 </Typography>
                 <Chip
                   size="small"
@@ -485,7 +489,7 @@ export default function FinancePage({ refresh, requireAuth }) {
                 </TableCell>
                 <TableCell>{order.source || '—'}</TableCell>
                 <TableCell>{paymentReferenceText(order) || '—'}</TableCell>
-                <TableCell align="right">{formatKs(order.amount)}</TableCell>
+                <TableCell align="right">{formatKs(order.paymentStatus === 'unpaid' ? order.balanceDue || order.total : order.total)}</TableCell>
                 <TableCell>
                   <Chip size="small" color={statusColor(order)} label={statusLabel(order)} />
                 </TableCell>
@@ -551,7 +555,7 @@ export default function FinancePage({ refresh, requireAuth }) {
               <InputLabel>Method</InputLabel>
               <Select
                 label="Method"
-                value={receiveDraft.method}
+                value={selectedReceiveMethod}
                 onChange={(event) =>
                   setReceiveDraft((current) => ({
                     ...current,
@@ -561,7 +565,7 @@ export default function FinancePage({ refresh, requireAuth }) {
                     amount:
                       isCodPaymentMethod(event.target.value, data.catalogSettings)
                         ? selectedCodTotal
-                        : receiveOrder?.total || '',
+                        : receiveOrder?.balanceDue || receiveOrder?.total || '',
                   }))
                 }
               >
@@ -602,7 +606,7 @@ export default function FinancePage({ refresh, requireAuth }) {
                                 : [...current, order.id].slice(0, 100)
                               const nextTotal = state.outstandingOrders
                                 .filter((candidate) => nextIds.includes(candidate.id))
-                                .reduce((sum, candidate) => sum + candidate.total, 0)
+                                .reduce((sum, candidate) => sum + Number(candidate.balanceDue || candidate.total || 0), 0)
                               setReceiveDraft((draft) => ({ ...draft, amount: nextTotal }))
                               return nextIds
                             })
@@ -614,7 +618,7 @@ export default function FinancePage({ refresh, requireAuth }) {
                             {order.customer.phone} · {order.date} · #{order.id.slice(0, 8)}
                           </Typography>
                         </Box>
-                        <Typography fontWeight={800}>{formatKs(order.total)}</Typography>
+                        <Typography fontWeight={800}>{formatKs(order.balanceDue || order.total)}</Typography>
                       </Box>
                     )
                   })}
@@ -647,12 +651,14 @@ export default function FinancePage({ refresh, requireAuth }) {
                 slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
               />
             ) : null}
-            <TextField
-              label="Transaction ID — last 6 digits"
-              value={receiveDraft.transactionId}
-              onChange={(event) => setReceiveDraft((current) => ({ ...current, transactionId: digitsOnly(event.target.value) }))}
-              slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
-            />
+            {!receiveIsCash ? (
+              <TextField
+                label="Transaction ID — last 6 digits"
+                value={receiveDraft.transactionId}
+                onChange={(event) => setReceiveDraft((current) => ({ ...current, transactionId: digitsOnly(event.target.value) }))}
+                slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
+              />
+            ) : null}
             <TextField
               type="date"
               label="Date"

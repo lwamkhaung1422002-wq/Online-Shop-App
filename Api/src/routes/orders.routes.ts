@@ -65,8 +65,14 @@ function badRequest(message: string): Error {
   return error;
 }
 
-function lineTotal(quantity: number, unitPrice: number, discount = 0): number {
-  return Math.max(0, quantity * unitPrice - discount);
+function lineTotal(
+  quantity: number,
+  unitPrice: number,
+  discount = 0,
+  deductionType = "discount",
+): number {
+  const lineDiscount = deductionType === "discount" ? discount : 0;
+  return Math.max(0, quantity * unitPrice - lineDiscount);
 }
 
 async function reserveOrderInventory(
@@ -276,6 +282,9 @@ ordersRouter.post("/:shopId/orders", async (request, response, next) => {
         });
 
         if (!product) throw notFound("Product not found.");
+        if (!product.isActive) {
+          throw badRequest("Product has been removed from active selling.");
+        }
 
         const variant = item.variantId
           ? product.variants.find((entry) => entry.id === item.variantId)
@@ -300,7 +309,7 @@ ordersRouter.post("/:shopId/orders", async (request, response, next) => {
           unitPrice,
           discount,
           deductionType: item.deductionType,
-          lineTotal: lineTotal(item.quantity, unitPrice, discount),
+          lineTotal: lineTotal(item.quantity, unitPrice, discount, item.deductionType),
         });
       }
 
@@ -496,6 +505,7 @@ ordersRouter.post("/:shopId/orders/:orderId/cancel", async (request, response, n
         where: { id: orderId, shopId },
         include: {
           items: { include: { allocations: true } },
+          payments: true,
         },
       });
 
@@ -503,7 +513,8 @@ ordersRouter.post("/:shopId/orders/:orderId/cancel", async (request, response, n
       if (existingOrder.fulfillmentStatus === "cancelled") {
         throw badRequest("Order is already cancelled.");
       }
-      if (existingOrder.paymentStatus === "paid") {
+      const paidAmount = existingOrder.payments.reduce((sum, payment) => sum + payment.amount, 0);
+      if (existingOrder.paymentStatus === "paid" || paidAmount > 0) {
         throw badRequest("Refund the payment before cancelling this order.");
       }
 
@@ -540,6 +551,37 @@ ordersRouter.post("/:shopId/orders/:orderId/cancel", async (request, response, n
     });
 
     response.status(200).json({ order });
+  } catch (error) {
+    next(error);
+  }
+});
+
+ordersRouter.delete("/:shopId/orders/:orderId", async (request, response, next) => {
+  try {
+    const authUser = getAuthUser(request);
+    const { shopId } = paramsSchema.parse(request.params);
+    const orderId = z.string().min(1).parse(request.params.orderId);
+
+    await assertUserOwnsShop(authUser.id, shopId);
+
+    const existingOrder = await prisma.order.findFirst({
+      where: { id: orderId, shopId },
+      include: { payments: true },
+    });
+
+    if (!existingOrder) throw notFound("Order not found.");
+    if (existingOrder.fulfillmentStatus !== "cancelled") {
+      throw badRequest("Only cancelled orders can be deleted.");
+    }
+    if (existingOrder.paymentStatus !== "unpaid" || existingOrder.payments.length > 0) {
+      throw badRequest("Orders with payment records must stay in the audit history.");
+    }
+
+    await prisma.order.delete({
+      where: { id: orderId },
+    });
+
+    response.status(204).send();
   } catch (error) {
     next(error);
   }

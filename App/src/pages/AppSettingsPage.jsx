@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
   FormControl,
   InputLabel,
   MenuItem,
@@ -23,8 +22,7 @@ import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
 import {
   createProductDocument,
-  createVariantDocument,
-  deleteVariantDocument,
+  deleteProductDocument,
   savePaymentMethods,
   updateProductDocument,
 } from '../services/shopApiService.js'
@@ -35,10 +33,8 @@ import {
   normalizeCatalogSettings,
   normalizeOptionTree,
   normalizePaymentMethods,
-  optionPathFromValueIds,
   optionValuesForLevel,
   valueIdsFromOptionPath,
-  variantDisplayName,
 } from '../utils/catalog.js'
 
 function emptyProductDraft() {
@@ -73,7 +69,6 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
   const [saving, setSaving] = useState(false)
 
   const tree = normalizeOptionTree(productDraft.optionTree)
-  const activePath = optionPathFromValueIds(tree, selectedValueIds)
 
   const loadProduct = (product) => {
     const normalized = {
@@ -124,7 +119,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         levels: current.optionTree.levels.slice(0, nextDepth),
         values: current.optionTree.values.filter((value) => value.level < nextDepth),
       },
-      variants: current.variants.filter((variant) => valueIdsFromOptionPath(variant.optionPath).length <= nextDepth),
+      variants: [],
     }))
     setSelectedValueIds((current) => current.slice(0, nextDepth))
   }
@@ -140,7 +135,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     ])
   }
 
-  const addValue = (levelIndex, parentId) => {
+  const addValue = (levelIndex) => {
     const level = tree.levels[levelIndex]
     if (!level?.label.trim()) {
       notify('Enter the option name first.', 'warning')
@@ -148,10 +143,10 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     }
     const trimmed = String(valueDrafts[level?.id] || '').trim()
     if (!trimmed) return
-    const duplicate = optionValuesForLevel(tree, levelIndex, levelIndex === 0 ? null : parentId)
+    const duplicate = optionValuesForLevel(tree, levelIndex)
       .some((value) => value.label.trim().toLowerCase() === trimmed.toLowerCase())
     if (duplicate) {
-      notify('This option value already exists.', 'warning')
+      notify('This value already exists in this option group.', 'warning')
       return
     }
     const valueId = createOptionId('value')
@@ -165,7 +160,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
             id: valueId,
             label: trimmed,
             level: levelIndex,
-            parentId: levelIndex === 0 ? null : parentId,
+            parentId: null,
           },
         ],
       },
@@ -203,16 +198,6 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
       return
     }
     const removeIds = new Set([valueId])
-    let changed = true
-    while (changed) {
-      changed = false
-      tree.values.forEach((value) => {
-        if (value.parentId && removeIds.has(value.parentId) && !removeIds.has(value.id)) {
-          removeIds.add(value.id)
-          changed = true
-        }
-      })
-    }
     setProductDraft((current) => ({
       ...current,
       optionTree: {
@@ -253,7 +238,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         price: savedProduct.price ?? '',
         cost: savedProduct.cost ?? '',
         optionTree: normalizeOptionTree(savedProduct.optionTree),
-        variants: savedProduct.variants || productDraft.variants,
+        variants: savedProduct.variants || productDraft.variants || [],
       })
     } catch (error) {
       notify(error.message || 'Product settings could not be saved.', 'error')
@@ -262,53 +247,19 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     }
   }
 
-  const addVariant = async () => {
-    if (requireAuth?.('add product variant')) return
-    if (!productDraft.id) {
-      notify('Save the product before adding variants.', 'warning')
-      return
-    }
-    const path = tree.levels.length ? activePath : []
-    if (tree.levels.length && path.length !== tree.levels.length) {
-      notify('Select a final option path first.', 'warning')
-      return
-    }
+  const removeProduct = async () => {
+    if (requireAuth?.('remove product')) return
+    if (!productDraft.id) return
+    const confirmed = window.confirm('Remove this product from active selling? Stock must be fully sold or reserved. Existing stock and sales records will stay readable.')
+    if (!confirmed) return
     setSaving(true)
     try {
-      const result = await createVariantDocument(user.uid, productDraft.id, {
-        name: path.length ? path.map((entry) => entry.value).join(' / ') : 'Default',
-        price: Number(productDraft.price || 0),
-        cost: Number(productDraft.cost || 0),
-        optionPath: path,
-      })
-      const createdVariant = result.variant || result
-      notify('Variant added.')
-      setProductDraft((current) => ({
-        ...current,
-        variants: [...(current.variants || []), createdVariant],
-      }))
-      await refresh()
-      setSelectedValueIds([])
-    } catch (error) {
-      notify(error.message || 'Variant could not be added.', 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const deleteVariant = async (variant) => {
-    if (requireAuth?.('remove product variant')) return
-    setSaving(true)
-    try {
-      await deleteVariantDocument(user.uid, productDraft.id, variant.id)
-      notify('Variant removed or archived.')
-      setProductDraft((current) => ({
-        ...current,
-        variants: (current.variants || []).filter((entry) => String(entry.id) !== String(variant.id)),
-      }))
+      await deleteProductDocument(user.uid, productDraft.id)
+      notify('Product removed from active selling.')
+      resetProduct()
       await refresh()
     } catch (error) {
-      notify(error.message || 'Variant could not be removed.', 'error')
+      notify(error.message || 'Product could not be removed.', 'error')
     } finally {
       setSaving(false)
     }
@@ -360,9 +311,11 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
 
   const saveMethods = async () => {
     if (requireAuth?.('save payment methods')) return
+    const normalizedMethods = normalizePaymentMethods(paymentMethods)
     setSaving(true)
     try {
-      await savePaymentMethods(user.uid, normalizePaymentMethods(paymentMethods))
+      await savePaymentMethods(user.uid, normalizedMethods)
+      setPaymentMethods(normalizedMethods)
       notify('Payment methods saved.')
       await refresh()
     } catch (error) {
@@ -381,7 +334,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
           <Box>
             <Typography variant="h6">Stock Settings</Typography>
             <Typography variant="body2" color="text.secondary">
-              Build products with flexible nested options. Only explicit final paths become variants.
+              Add up to 3 option groups for each product. Variants are created when stock is added or sold.
             </Typography>
           </Box>
           <Button variant="outlined" onClick={resetProduct}>New product</Button>
@@ -398,34 +351,37 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
           <Button variant="contained" startIcon={<SaveRoundedIcon />} onClick={saveProduct} disabled={saving}>
             Save product
           </Button>
+          {productDraft.id ? (
+            <Button variant="outlined" color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={removeProduct} disabled={saving}>
+              Remove product
+            </Button>
+          ) : null}
           <Button variant="outlined" startIcon={<AddRoundedIcon />} onClick={addLevel} disabled={tree.levels.length >= MAX_OPTION_LEVELS}>
-            Add option
+            Add option ({tree.levels.length}/{MAX_OPTION_LEVELS})
           </Button>
         </Stack>
 
         <Stack spacing={2} sx={{ mt: 3 }}>
           {tree.levels.map((level, index) => {
-            const parentId = index === 0 ? null : selectedValueIds[index - 1]
-            const values = optionValuesForLevel(tree, index, parentId)
+            const values = optionValuesForLevel(tree, index)
             return (
               <Paper key={level.id} variant="outlined" sx={{ p: 2 }}>
                 <Box className="option-level-controls">
                   <TextField
                     label="Option name"
-                    placeholder="Size, Color, Material, Storage"
+                    placeholder={index === 0 ? 'Size' : index === 1 ? 'Color' : 'Type'}
                     value={level.label}
                     onChange={(event) => updateLevelLabel(index, event.target.value)}
                     fullWidth
                   />
                   <TextField
                     label={`${level.label || `Option ${index + 1}`} value`}
-                    placeholder={index === 0 ? 'Size 1' : 'Red'}
+                    placeholder={index === 0 ? 'Small' : index === 1 ? 'Brown' : 'Dress'}
                     value={valueDrafts[level.id] || ''}
                     onChange={(event) => updateValueDraft(level.id, event.target.value)}
-                    disabled={index > 0 && !parentId}
                     fullWidth
                   />
-                  <Button variant="outlined" onClick={() => addValue(index, parentId)} disabled={index > 0 && !parentId}>
+                  <Button variant="outlined" onClick={() => addValue(index)} disabled={!String(valueDrafts[level.id] || '').trim()}>
                     Add value
                   </Button>
                   <Button variant="outlined" color="error" onClick={() => removeLevel(index)}>
@@ -444,7 +400,11 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
                       deleteIcon={<DeleteOutlineRoundedIcon />}
                     />
                   ))}
-                  {!values.length ? <Typography variant="body2" color="text.secondary">No values yet.</Typography> : null}
+                  {!values.length ? (
+                    <Typography variant="body2" color="text.secondary">
+                      No values yet.
+                    </Typography>
+                  ) : null}
                   {selectedValueIds[index] ? (
                     <Button size="small" variant="text" onClick={() => renameValue(selectedValueIds[index])}>
                       Edit selected
@@ -458,32 +418,6 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
             <Alert severity="info">Leave option levels empty for products with no options.</Alert>
           ) : null}
         </Stack>
-
-        <Divider sx={{ my: 3 }} />
-        <Stack direction={{ xs: 'column', md: 'row' }} gap={2} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' } }}>
-          <Box>
-            <Typography fontWeight={900}>Explicit variants</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Add only the final option paths that really exist.
-            </Typography>
-          </Box>
-          <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={addVariant} disabled={saving || !productDraft.id}>
-            Add selected variant
-          </Button>
-        </Stack>
-        <Stack direction="row" gap={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
-          {(productDraft.variants || []).map((variant) => (
-            <Chip
-              key={variant.id}
-              label={variantDisplayName(variant)}
-              onDelete={() => deleteVariant(variant)}
-              deleteIcon={<DeleteOutlineRoundedIcon />}
-            />
-          ))}
-          {productDraft.id && !productDraft.variants?.length ? (
-            <Typography variant="body2" color="text.secondary">No variants created yet.</Typography>
-          ) : null}
-        </Stack>
       </Paper>
 
       <Paper variant="outlined" className="section-card">
@@ -492,7 +426,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
           {data.products.map((product) => (
             <Chip
               key={product.id}
-              label={`${product.name} (${product.variants?.length || 0})`}
+              label={product.name}
               color={productDraft.id === product.id ? 'primary' : 'default'}
               variant={productDraft.id === product.id ? 'filled' : 'outlined'}
               onClick={() => loadProduct(product)}
@@ -512,14 +446,14 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
             onChange={(event) => setMethodDraft((current) => ({ ...current, name: event.target.value }))}
           />
           <FormControl className="span-4">
-            <InputLabel>Method type</InputLabel>
+            <InputLabel>Payment behavior</InputLabel>
             <Select
-              label="Method type"
+              label="Payment behavior"
               value={methodDraft.type}
               onChange={(event) => setMethodDraft((current) => ({ ...current, type: event.target.value }))}
             >
-              <MenuItem value="normal">Normal</MenuItem>
-              <MenuItem value="cod">COD-like</MenuItem>
+              <MenuItem value="normal">Standard payment</MenuItem>
+              <MenuItem value="cod">Pay-on-delivery collection</MenuItem>
             </Select>
           </FormControl>
           <Button className="span-3" variant="contained" onClick={addPaymentMethod}>
@@ -537,14 +471,14 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
                   size="small"
                 />
                 <FormControl size="small" sx={{ minWidth: 160 }}>
-                  <InputLabel>Type</InputLabel>
+                  <InputLabel>Behavior</InputLabel>
                   <Select
-                    label="Type"
+                    label="Behavior"
                     value={method.type}
                     onChange={(event) => updatePaymentMethod(method.id, { type: event.target.value })}
                   >
-                    <MenuItem value="normal">Normal</MenuItem>
-                    <MenuItem value="cod">COD-like</MenuItem>
+                    <MenuItem value="normal">Standard payment</MenuItem>
+                    <MenuItem value="cod">Pay-on-delivery collection</MenuItem>
                   </Select>
                 </FormControl>
                 <FormControl size="small" sx={{ minWidth: 140 }}>
