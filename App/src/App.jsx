@@ -158,6 +158,14 @@ function ProtectedApp({ onGetStarted }) {
   }, [])
 
   useEffect(() => {
+    const openAuth = () => {
+      if (user.preview) onGetStarted()
+    }
+    window.addEventListener('auth-required', openAuth)
+    return () => window.removeEventListener('auth-required', openAuth)
+  }, [onGetStarted, user.preview])
+
+  useEffect(() => {
     document.title = shop?.name || 'Shop Owner'
   }, [shop?.name])
 

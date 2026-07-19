@@ -41,6 +41,9 @@ async function parseResponse(response) {
 
 export async function apiRequest(path, { method = 'GET', body, token = getStoredToken() } = {}) {
   if (!token && path !== '/auth/register' && path !== '/auth/login') {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth-required'))
+    }
     throw new Error('Sign in or register to use this action.')
   }
 

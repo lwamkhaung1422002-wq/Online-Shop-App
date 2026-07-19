@@ -27,7 +27,6 @@ import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded'
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded'
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
-import BackupButton from './BackupButton.jsx'
 import { preloadRoute } from '../routes.js'
 
 const drawerWidth = 224
@@ -41,7 +40,16 @@ const navItems = [
   { key: 'order', label: 'Order', icon: <AddShoppingCartRoundedIcon /> },
 ]
 
-export default function AppLayout({ page, onNavigate, onLogout, userEmail, shopName = 'Shop Owner', children }) {
+export default function AppLayout({
+  page,
+  onNavigate,
+  onLogout,
+  onGetStarted,
+  preview = false,
+  userEmail,
+  shopName = 'Shop Owner',
+  children,
+}) {
   const desktop = useMediaQuery('(min-width:768px)')
   const current = navItems.find((item) => item.key === page) || navItems[0]
   const [moreAnchor, setMoreAnchor] = useState(null)
@@ -85,23 +93,26 @@ export default function AppLayout({ page, onNavigate, onLogout, userEmail, shopN
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             {shopName}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, mr: 1.5 }}>
-            {userEmail}
-          </Typography>
+          {!preview && userEmail ? (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ display: { xs: 'none', sm: 'block' }, mr: 1.5 }}
+            >
+              {userEmail}
+            </Typography>
+          ) : null}
           <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', md: 'block' }, mr: 1.5 }}>
             {current.label}
           </Typography>
-          <Box sx={{ display: { xs: 'none', sm: 'block' }, mr: 1 }}>
-            <BackupButton compact />
-          </Box>
           <Button
             size="small"
             variant="outlined"
             startIcon={<LogoutRoundedIcon />}
-            onClick={onLogout}
+            onClick={preview ? onGetStarted : onLogout}
             sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
           >
-            Logout
+            {preview ? 'Login / Register' : 'Logout'}
           </Button>
         </Toolbar>
       </AppBar>
@@ -187,9 +198,6 @@ export default function AppLayout({ page, onNavigate, onLogout, userEmail, shopN
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        <Box sx={{ display: { xs: 'block', sm: 'none' }, px: 1, py: 0.5 }}>
-          <BackupButton compact />
-        </Box>
         {navItems
           .filter((item) => ['finance', 'balance'].includes(item.key))
           .map((item) => (
@@ -209,14 +217,15 @@ export default function AppLayout({ page, onNavigate, onLogout, userEmail, shopN
           ))}
         <MenuItem
           onClick={() => {
-            onLogout()
+            if (preview) onGetStarted()
+            else onLogout()
             setMoreAnchor(null)
           }}
         >
           <ListItemIcon>
             <LogoutRoundedIcon />
           </ListItemIcon>
-          Logout
+          {preview ? 'Login / Register' : 'Logout'}
         </MenuItem>
       </Menu>
 

@@ -14,14 +14,14 @@ const AuthContext = createContext(null)
 const previewUser = {
   id: 'preview-user',
   uid: 'preview-user',
-  name: 'Preview Owner',
-  email: 'preview@example.com',
+  name: 'Shop Owner',
+  email: '',
   preview: true,
   shop: {
     id: 'preview-shop',
-    name: 'General Shop Preview',
+    name: 'Shop Owner',
   },
-  shops: [{ id: 'preview-shop', name: 'General Shop Preview' }],
+  shops: [{ id: 'preview-shop', name: 'Shop Owner' }],
 }
 
 function buildSession(result) {
