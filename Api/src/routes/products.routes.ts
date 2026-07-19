@@ -13,6 +13,35 @@ const paramsSchema = z.object({
 });
 
 const moneySchema = z.coerce.number().int().nonnegative();
+const maxOptionLevels = 5;
+
+const optionValueSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(80),
+  level: z.coerce.number().int().min(0).max(maxOptionLevels - 1),
+  parentId: z.string().trim().min(1).max(80).nullable().optional(),
+});
+
+const optionLevelSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(40),
+});
+
+const optionTreeSchema = z.object({
+  levels: z.array(optionLevelSchema).max(maxOptionLevels).default([]),
+  values: z.array(optionValueSchema).max(500).default([]),
+});
+
+const optionPathSchema = z
+  .array(
+    z.object({
+      level: z.coerce.number().int().min(0).max(maxOptionLevels - 1),
+      label: z.string().trim().min(1).max(40),
+      valueId: z.string().trim().min(1).max(80),
+      value: z.string().trim().min(1).max(80),
+    }),
+  )
+  .max(maxOptionLevels);
 
 const productSchema = z.object({
   name: z.string().trim().min(1, "Product name is required."),
@@ -21,19 +50,21 @@ const productSchema = z.object({
   price: moneySchema,
   cost: moneySchema.optional(),
   categoryId: z.string().trim().optional(),
+  optionTree: optionTreeSchema.optional(),
   isActive: z.boolean().optional(),
 });
 
 const updateProductSchema = productSchema.partial();
 
 const variantSchema = z.object({
-  name: z.string().trim().min(1, "Variant name is required."),
+  name: z.string().trim().min(1, "Variant name is required.").optional(),
   sku: z.string().trim().optional(),
   price: moneySchema.optional(),
   cost: moneySchema.optional(),
   option1: z.string().trim().optional(),
   option2: z.string().trim().optional(),
   option3: z.string().trim().optional(),
+  optionPath: optionPathSchema.optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -67,6 +98,139 @@ async function assertProductBelongsToShop(productId: string, shopId: string) {
     error.name = "NotFoundError";
     throw error;
   }
+}
+
+function badRequest(message: string): Error {
+  const error = new Error(message);
+  error.name = "BadRequestError";
+  return error;
+}
+
+function normalizeOptionTree(input: z.infer<typeof optionTreeSchema>) {
+  const levels = input.levels.map((level, index) => ({
+    id: level.id.trim(),
+    label: level.label.trim(),
+    level: index,
+  }));
+  const levelIds = new Set(levels.map((level) => level.id));
+  const valueIds = new Set<string>();
+  const values = input.values.map((value) => {
+    const normalized = {
+      id: value.id.trim(),
+      label: value.label.trim(),
+      level: value.level,
+      parentId: value.parentId?.trim() || null,
+    };
+
+    if (valueIds.has(normalized.id)) {
+      throw badRequest("Option values must be unique.");
+    }
+    valueIds.add(normalized.id);
+
+    const level = levels[normalized.level];
+    if (!level || !levelIds.has(level.id)) {
+      throw badRequest("Option value level is invalid.");
+    }
+    return normalized;
+  });
+
+  const valuesById = new Map(values.map((value) => [value.id, value]));
+  const siblingNames = new Set<string>();
+  values.forEach((value) => {
+    if (value.level === 0 && value.parentId) {
+      throw badRequest("Parent option values cannot have a parent.");
+    }
+    if (value.level > 0) {
+      const parent = value.parentId ? valuesById.get(value.parentId) : null;
+      if (!parent || parent.level !== value.level - 1) {
+        throw badRequest("Child option values must belong to a valid parent option.");
+      }
+    }
+
+    const siblingKey = `${value.level}:${value.parentId ?? "__root"}:${value.label.toLowerCase()}`;
+    if (siblingNames.has(siblingKey)) {
+      throw badRequest("Option values under the same parent must be unique.");
+    }
+    siblingNames.add(siblingKey);
+  });
+
+  if (values.length > 0 && levels.length === 0) {
+    throw badRequest("Option labels are required when option values exist.");
+  }
+
+  return { levels, values };
+}
+
+function parseStoredOptionTree(optionTree: unknown) {
+  return normalizeOptionTree(optionTreeSchema.parse(optionTree ?? {}));
+}
+
+function variantSignature(optionPath: z.infer<typeof optionPathSchema> | undefined) {
+  if (!optionPath || optionPath.length === 0) return "__default";
+  return optionPath
+    .slice()
+    .sort((a, b) => a.level - b.level)
+    .map((entry) => `${entry.level}:${entry.valueId}`)
+    .join("|");
+}
+
+function validateVariantPath(optionTree: unknown, optionPath: z.infer<typeof optionPathSchema> | undefined) {
+  const tree = parseStoredOptionTree(optionTree);
+  const path = optionPath ?? [];
+
+  if (tree.levels.length === 0) {
+    if (path.length > 0) throw badRequest("This product does not use options.");
+    return [];
+  }
+
+  if (path.length !== tree.levels.length) {
+    throw badRequest("Variant option path does not match this product's option levels.");
+  }
+
+  const valuesById = new Map(tree.values.map((value) => [value.id, value]));
+  const sortedPath = path.slice().sort((a, b) => a.level - b.level);
+  const normalized = sortedPath.map((entry, index) => {
+      const level = tree.levels[index];
+      const value = valuesById.get(entry.valueId);
+
+      if (!level || entry.level !== index || !value || value.level !== index) {
+        throw badRequest("Variant option path contains an invalid option value.");
+      }
+
+      if (index > 0 && value.parentId !== sortedPath[index - 1]?.valueId) {
+        throw badRequest("Child option value does not belong to the selected parent option.");
+      }
+
+      return {
+        level: index,
+        label: level.label,
+        valueId: value.id,
+        value: value.label,
+      };
+    });
+
+  return normalized;
+}
+
+function variantNameFromPath(path: z.infer<typeof optionPathSchema>) {
+  return path.length ? path.map((entry) => entry.value).join(" / ") : "Default";
+}
+
+function relabelVariantPath(optionTree: unknown, storedPath: unknown) {
+  const tree = parseStoredOptionTree(optionTree);
+  const path = optionPathSchema.parse(storedPath ?? []);
+  if (path.length === 0) return [];
+
+  const valuesById = new Map(tree.values.map((value) => [value.id, value]));
+  return path.map((entry) => {
+    const level = tree.levels[entry.level];
+    const value = valuesById.get(entry.valueId);
+    return {
+      ...entry,
+      label: level?.label ?? entry.label,
+      value: value?.label ?? entry.value,
+    };
+  });
 }
 
 productsRouter.get("/:shopId/products", async (request, response, next) => {
@@ -108,6 +272,7 @@ productsRouter.post("/:shopId/products", async (request, response, next) => {
       ...(input.sku !== undefined ? { sku: input.sku } : {}),
       ...(input.cost !== undefined ? { cost: input.cost } : {}),
       ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+      ...(input.optionTree !== undefined ? { optionTree: normalizeOptionTree(input.optionTree) } : {}),
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
     };
 
@@ -143,16 +308,44 @@ productsRouter.patch("/:shopId/products/:productId", async (request, response, n
       ...(input.price !== undefined ? { price: input.price } : {}),
       ...(input.cost !== undefined ? { cost: input.cost } : {}),
       ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+      ...(input.optionTree !== undefined ? { optionTree: normalizeOptionTree(input.optionTree) } : {}),
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
     };
 
-    const product = await prisma.product.update({
-      where: { id: productId },
-      data,
-      include: {
-        category: true,
-        variants: true,
-      },
+    const product = await prisma.$transaction(async (tx) => {
+      const updatedProduct = await tx.product.update({
+        where: { id: productId },
+        data,
+        include: {
+          category: true,
+          variants: true,
+        },
+      });
+
+      if (input.optionTree !== undefined) {
+        for (const variant of updatedProduct.variants) {
+          const nextPath = relabelVariantPath(updatedProduct.optionTree, variant.optionPath);
+          if (nextPath.length === 0) continue;
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: {
+              optionPath: nextPath,
+              option1: nextPath[0]?.value ?? null,
+              option2: nextPath[1]?.value ?? null,
+              option3: nextPath[2]?.value ?? null,
+              name: variantNameFromPath(nextPath),
+            },
+          });
+        }
+      }
+
+      return tx.product.findUniqueOrThrow({
+        where: { id: productId },
+        include: {
+          category: true,
+          variants: true,
+        },
+      });
     });
 
     response.status(200).json({ product });
@@ -186,19 +379,47 @@ productsRouter.post("/:shopId/products/:productId/variants", async (request, res
     const input = variantSchema.parse(request.body);
 
     await assertUserOwnsShop(authUser.id, shopId);
-    await assertProductBelongsToShop(productId, shopId);
+    const product = await prisma.product.findFirst({
+      where: { id: productId, shopId },
+      select: { id: true, optionTree: true },
+    });
+
+    if (!product) {
+      const error = new Error("Product not found.");
+      error.name = "NotFoundError";
+      throw error;
+    }
+
+    const optionPath = validateVariantPath(product.optionTree, input.optionPath);
+    const signature = variantSignature(optionPath);
+
+    const duplicateVariant = await prisma.productVariant.findFirst({
+      where: { productId, variantSignature: signature },
+      select: { id: true, isActive: true },
+    });
+
+    if (duplicateVariant) {
+      throw badRequest(
+        duplicateVariant.isActive
+          ? "This variant already exists."
+          : "This variant is archived. Edit or reactivate it instead of creating a duplicate.",
+      );
+    }
 
     const data: Prisma.ProductVariantUncheckedCreateInput = {
-      name: input.name,
+      name: input.name || variantNameFromPath(optionPath),
       productId,
-      ...(input.sku !== undefined ? { sku: input.sku } : {}),
-      ...(input.price !== undefined ? { price: input.price } : {}),
-      ...(input.cost !== undefined ? { cost: input.cost } : {}),
-      ...(input.option1 !== undefined ? { option1: input.option1 } : {}),
-      ...(input.option2 !== undefined ? { option2: input.option2 } : {}),
-      ...(input.option3 !== undefined ? { option3: input.option3 } : {}),
-      ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+      optionPath,
+      variantSignature: signature,
     };
+    if (input.sku !== undefined) data.sku = input.sku;
+    if (input.price !== undefined) data.price = input.price;
+    if (input.cost !== undefined) data.cost = input.cost;
+    if (input.option3 !== undefined) data.option3 = input.option3;
+    if (input.isActive !== undefined) data.isActive = input.isActive;
+    data.option1 = input.option1 ?? optionPath[0]?.value ?? null;
+    data.option2 = input.option2 ?? optionPath[1]?.value ?? null;
+    data.option3 = input.option3 ?? optionPath[2]?.value ?? null;
 
     const variant = await prisma.productVariant.create({
       data,
@@ -221,7 +442,16 @@ productsRouter.patch(
       const input = updateVariantSchema.parse(request.body);
 
       await assertUserOwnsShop(authUser.id, shopId);
-      await assertProductBelongsToShop(productId, shopId);
+      const product = await prisma.product.findFirst({
+        where: { id: productId, shopId },
+        select: { id: true, optionTree: true },
+      });
+
+      if (!product) {
+        const error = new Error("Product not found.");
+        error.name = "NotFoundError";
+        throw error;
+      }
 
       const existingVariant = await prisma.productVariant.findFirst({
         where: { id: variantId, productId },
@@ -234,16 +464,40 @@ productsRouter.patch(
         throw error;
       }
 
-      const data: Prisma.ProductVariantUncheckedUpdateInput = {
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.sku !== undefined ? { sku: input.sku } : {}),
-        ...(input.price !== undefined ? { price: input.price } : {}),
-        ...(input.cost !== undefined ? { cost: input.cost } : {}),
-        ...(input.option1 !== undefined ? { option1: input.option1 } : {}),
-        ...(input.option2 !== undefined ? { option2: input.option2 } : {}),
-        ...(input.option3 !== undefined ? { option3: input.option3 } : {}),
-        ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
-      };
+      const optionPath =
+        input.optionPath !== undefined ? validateVariantPath(product.optionTree, input.optionPath) : undefined;
+
+      if (optionPath !== undefined) {
+        const duplicateVariant = await prisma.productVariant.findFirst({
+          where: {
+            productId,
+            variantSignature: variantSignature(optionPath),
+            id: { not: variantId },
+          },
+          select: { id: true },
+        });
+
+        if (duplicateVariant) {
+          throw badRequest("This variant already exists.");
+        }
+      }
+
+      const data: Prisma.ProductVariantUncheckedUpdateInput = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.sku !== undefined) data.sku = input.sku;
+      if (input.price !== undefined) data.price = input.price;
+      if (input.cost !== undefined) data.cost = input.cost;
+      if (input.option3 !== undefined) data.option3 = input.option3;
+      if (input.isActive !== undefined) data.isActive = input.isActive;
+      if (input.option1 !== undefined) data.option1 = input.option1;
+      if (input.option2 !== undefined) data.option2 = input.option2;
+      if (optionPath !== undefined) {
+        data.option1 = optionPath[0]?.value ?? null;
+        data.option2 = optionPath[1]?.value ?? null;
+        data.option3 = optionPath[2]?.value ?? null;
+        data.optionPath = optionPath;
+        data.variantSignature = variantSignature(optionPath);
+      }
 
       const variant = await prisma.productVariant.update({
         where: { id: variantId },
@@ -278,6 +532,27 @@ productsRouter.delete(
         const error = new Error("Product variant not found.");
         error.name = "NotFoundError";
         throw error;
+      }
+
+      const usage = await prisma.productVariant.findUnique({
+        where: { id: variantId },
+        select: {
+          _count: {
+            select: {
+              inventory: true,
+              orderItems: true,
+            },
+          },
+        },
+      });
+
+      if ((usage?._count.inventory ?? 0) > 0 || (usage?._count.orderItems ?? 0) > 0) {
+        const variant = await prisma.productVariant.update({
+          where: { id: variantId },
+          data: { isActive: false, archivedAt: new Date() },
+        });
+        response.status(200).json({ variant, archived: true });
+        return;
       }
 
       await prisma.productVariant.delete({ where: { id: variantId } });

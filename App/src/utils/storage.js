@@ -27,8 +27,13 @@ export function formatKs(value) {
   return `${Number(value || 0).toLocaleString()} Ks`
 }
 
-export function getVariantKey(size, color, type) {
+export function getVariantKey(size, color, type, variantId = '') {
+  if (variantId) return `variant:${variantId}`
   return `${size}__${color}__${type || '-'}`
+}
+
+export function getItemVariantKey(item = {}) {
+  return getVariantKey(item.size, item.color, item.type, item.variantId)
 }
 
 export function readRecords() {
@@ -100,7 +105,7 @@ export function buildAppState(source = readLocalData()) {
 
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getItemVariantKey(item)
       soldByVariant[key] = (soldByVariant[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -120,7 +125,7 @@ export function buildStockState(source = readLocalData()) {
   normalizeOrders(source.orders?.length ? source.orders : flattenRecords(records)).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getItemVariantKey(item)
       if (!soldQtyMap[key]) soldQtyMap[key] = []
       soldQtyMap[key].push({
         date: order.date,
@@ -130,7 +135,7 @@ export function buildStockState(source = readLocalData()) {
   })
 
   adjustments.forEach((adjustment) => {
-    const key = getVariantKey(adjustment.size, adjustment.color, adjustment.type)
+    const key = getItemVariantKey(adjustment)
     if (!adjustmentMap[key]) adjustmentMap[key] = []
     adjustmentMap[key].push(adjustment)
   })
@@ -153,7 +158,7 @@ export function buildSalesState(source = readLocalData()) {
 
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getItemVariantKey(item)
       soldByVariant[key] = (soldByVariant[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -196,7 +201,7 @@ export function buildOrderState(source = readLocalData()) {
   const stockPriceMap = {}
 
   stocks.forEach((stock) => {
-    const key = getVariantKey(stock.size, stock.color, stock.type)
+    const key = getItemVariantKey(stock)
     stockQtyMap[key] = (stockQtyMap[key] || 0) + Number(stock.quantity || 0)
 
     if (!(key in stockPriceMap)) {
@@ -207,7 +212,7 @@ export function buildOrderState(source = readLocalData()) {
   normalizeOrders(source.orders?.length ? source.orders : flattenRecords(records)).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getItemVariantKey(item)
       soldQtyMap[key] = (soldQtyMap[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -215,8 +220,8 @@ export function buildOrderState(source = readLocalData()) {
   return { stocks, records, productTypes, productColors, stockQtyMap, soldQtyMap, stockPriceMap }
 }
 
-export function getAvailableStockFromMaps(stockQtyMap, soldQtyMap, size, color, type) {
-  const key = getVariantKey(size, color, type)
+export function getAvailableStockFromMaps(stockQtyMap, soldQtyMap, size, color, type, variantId = '') {
+  const key = getVariantKey(size, color, type, variantId)
   return Math.max(0, (stockQtyMap[key] || 0) - (soldQtyMap[key] || 0))
 }
 

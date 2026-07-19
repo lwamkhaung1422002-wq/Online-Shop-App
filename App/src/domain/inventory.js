@@ -1,4 +1,4 @@
-import { getVariantKey } from '../utils/storage.js'
+import { getItemVariantKey } from '../utils/storage.js'
 import { isStockReserved, normalizeOrders } from './orders.js'
 
 export function sortStockBatches(stocks = []) {
@@ -32,7 +32,7 @@ export function getLegacyReservedByVariant(orders = []) {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
       if (item.allocations.length) return
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getItemVariantKey(item)
       reserved[key] = (reserved[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -47,9 +47,9 @@ export function allocateFifo(stocks, orders, requestedItems) {
   const allocations = []
 
   for (const requested of requestedItems) {
-    const key = getVariantKey(requested.size, requested.color, requested.type)
+    const key = getItemVariantKey(requested)
     const batches = sortStockBatches(stocks).filter(
-      (stock) => getVariantKey(stock.size, stock.color, stock.type) === key,
+      (stock) => getItemVariantKey(stock) === key,
     )
 
     let legacyRemaining = legacyByVariant[key] || 0
@@ -115,9 +115,7 @@ export function getReservationBaseline(stocks = [], orders = []) {
 
   Object.entries(legacyByVariant).forEach(([variantKey, reservedQuantity]) => {
     let remaining = reservedQuantity
-    const batches = sortStockBatches(stocks).filter(
-      (stock) => getVariantKey(stock.size, stock.color, stock.type) === variantKey,
-    )
+    const batches = sortStockBatches(stocks).filter((stock) => getItemVariantKey(stock) === variantKey)
 
     batches.forEach((batch) => {
       if (remaining <= 0) return
@@ -135,14 +133,14 @@ export function getReservationBaseline(stocks = [], orders = []) {
 export function getAvailableByVariant(stocks = [], orders = []) {
   const totals = {}
   stocks.forEach((stock) => {
-    const key = getVariantKey(stock.size, stock.color, stock.type)
+    const key = getItemVariantKey(stock)
     totals[key] = (totals[key] || 0) + Number(stock.quantity || 0)
   })
 
   normalizeOrders(orders).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getItemVariantKey(item)
       totals[key] = (totals[key] || 0) - Number(item.quantity || 0)
     })
   })

@@ -79,4 +79,36 @@ describe('order model', () => {
     expect(order.items[1].deductionType).toBe('advance-payment')
     expect(order.subtotal).toBe(39000)
   })
+
+  it('preserves product and variant IDs for nested stock options', () => {
+    const order = normalizeOrder({
+      id: 'order-variant',
+      customer: { name: 'Customer', phone: '091234567' },
+      date: '2026-06-23',
+      items: [
+        {
+          id: 'item-variant',
+          productId: 'product-dress',
+          variantId: 'variant-size1-red',
+          variantName: 'Size 1 / Red',
+          optionPath: [
+            { level: 0, label: 'Size', valueId: 'size-1', value: 'Size 1' },
+            { level: 1, label: 'Color', valueId: 'red', value: 'Red' },
+          ],
+          type: 'Elegance Dress',
+          size: 'Size 1',
+          color: 'Red',
+          quantity: 1,
+          unitPrice: 25000,
+        },
+      ],
+      fulfillmentStatus: 'reserved',
+      paymentStatus: 'unpaid',
+    })
+
+    expect(order.items[0].productId).toBe('product-dress')
+    expect(order.items[0].variantId).toBe('variant-size1-red')
+    expect(order.items[0].variantName).toBe('Size 1 / Red')
+    expect(order.items[0].optionPath).toHaveLength(2)
+  })
 })

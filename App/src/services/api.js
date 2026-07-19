@@ -77,6 +77,10 @@ export const api = {
     apiRequest(`/shops/${shopId}/products/${productId}`, { method: 'PATCH', body: payload }),
   createVariant: (shopId, productId, payload) =>
     apiRequest(`/shops/${shopId}/products/${productId}/variants`, { method: 'POST', body: payload }),
+  updateVariant: (shopId, productId, variantId, payload) =>
+    apiRequest(`/shops/${shopId}/products/${productId}/variants/${variantId}`, { method: 'PATCH', body: payload }),
+  deleteVariant: (shopId, productId, variantId) =>
+    apiRequest(`/shops/${shopId}/products/${productId}/variants/${variantId}`, { method: 'DELETE' }),
   inventory: (shopId) => apiRequest(`/shops/${shopId}/inventory`),
   createInventory: (shopId, payload) =>
     apiRequest(`/shops/${shopId}/inventory`, { method: 'POST', body: payload }),

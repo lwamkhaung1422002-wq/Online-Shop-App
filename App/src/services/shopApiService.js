@@ -1,7 +1,14 @@
 import { api, getStoredShopId } from './api.js'
 import { groupOrdersByMonth } from '../utils/storage.js'
 import { normalizeOrders } from '../domain/orders.js'
-import { normalizeCatalogSettings, uniqueCatalogValues } from '../utils/catalog.js'
+import {
+  normalizeCatalogSettings,
+  normalizeOptionPath,
+  normalizeOptionTree,
+  uniqueCatalogValues,
+  variantDisplayName,
+  variantOptionValue,
+} from '../utils/catalog.js'
 
 export const emptyData = {
   records: {},
@@ -34,11 +41,23 @@ function uniqueItems(items) {
 }
 
 function variantSize(variant) {
-  return variant?.option1 || variant?.name || 'Other'
+  return variantOptionValue(variant, 0, variant?.option1 || variant?.name || 'Default')
 }
 
 function variantColor(variant) {
-  return variant?.option2 || variant?.option3 || '-'
+  return variantOptionValue(variant, 1, variant?.option2 || variant?.option3 || '-')
+}
+
+function mapProduct(product) {
+  return {
+    ...product,
+    optionTree: normalizeOptionTree(product.optionTree),
+    variants: (product.variants || []).map((variant) => ({
+      ...variant,
+      optionPath: normalizeOptionPath(variant.optionPath),
+      displayName: variantDisplayName(variant),
+    })),
+  }
 }
 
 function mapStock(batch) {
@@ -48,6 +67,8 @@ function mapStock(batch) {
     id: String(batch.id),
     productId: batch.productId,
     variantId: batch.variantId,
+    variantName: variantDisplayName(variant),
+    optionPath: normalizeOptionPath(variant?.optionPath),
     date: dateOnly(batch.receivedAt || batch.createdAt),
     deli: 0,
     size: variantSize(variant),
@@ -103,6 +124,8 @@ function mapOrder(order, payments = []) {
       type: item.productName || item.product?.name || '-',
       size: variantSize(item.variant),
       color: variantColor(item.variant),
+      variantName: variantDisplayName(item.variant),
+      optionPath: normalizeOptionPath(item.variant?.optionPath),
       quantity: Number(item.quantity || 0),
       unitPrice: Number(item.unitPrice || 0),
       unitCost: Number(item.unitCost || 0),
@@ -199,7 +222,7 @@ async function loadUserData(uid) {
   const stocks = (inventoryResult.inventory || []).map(mapStock)
   const expenses = (expensesResult.expenses || []).map(mapExpense)
   const adjustments = (adjustmentsResult.adjustments || []).map(mapAdjustment)
-  const products = productsResult.products || []
+  const products = (productsResult.products || []).map(mapProduct)
   const catalogSettings = normalizeCatalogSettings(settingsResult.settings)
   const productTypes = uniqueItems([
     ...products.map((product) => product.name),
@@ -269,6 +292,11 @@ async function ensureProduct(shopId, stock) {
 }
 
 async function ensureVariant(shopId, product, stock) {
+  if (stock.variantId) {
+    const existingById = (product.variants || []).find((variant) => String(variant.id) === String(stock.variantId))
+    if (existingById) return existingById
+  }
+
   const size = stock.size || 'Other'
   const color = stock.color || '-'
   const variants = product.variants || []
@@ -342,15 +370,61 @@ export async function saveCatalogSettings(uid, settings) {
   return api.updateShopSettings(shopIdFrom(uid), settings)
 }
 
+export async function createProductDocument(uid, product) {
+  return api.createProduct(shopIdFrom(uid), {
+    name: product.name,
+    price: Number(product.price || 0),
+    cost: Number(product.cost || 0),
+    optionTree: normalizeOptionTree(product.optionTree),
+  })
+}
+
+export async function updateProductDocument(uid, productId, product) {
+  return api.updateProduct(shopIdFrom(uid), productId, {
+    name: product.name,
+    price: Number(product.price || 0),
+    cost: Number(product.cost || 0),
+    isActive: product.isActive,
+    optionTree: normalizeOptionTree(product.optionTree),
+  })
+}
+
+export async function createVariantDocument(uid, productId, variant) {
+  return api.createVariant(shopIdFrom(uid), productId, {
+    name: variant.name,
+    price: Number(variant.price || 0),
+    cost: Number(variant.cost || 0),
+    optionPath: normalizeOptionPath(variant.optionPath),
+    isActive: variant.isActive ?? true,
+  })
+}
+
+export async function updateVariantDocument(uid, productId, variantId, variant) {
+  return api.updateVariant(shopIdFrom(uid), productId, variantId, {
+    name: variant.name,
+    price: Number(variant.price || 0),
+    cost: Number(variant.cost || 0),
+    optionPath: normalizeOptionPath(variant.optionPath),
+    isActive: variant.isActive,
+  })
+}
+
+export async function deleteVariantDocument(uid, productId, variantId) {
+  return api.deleteVariant(shopIdFrom(uid), productId, variantId)
+}
+
 export async function createOrderAtomic(uid, order, stocks, _existingOrders, paymentDetails = null) {
   const shopId = shopIdFrom(uid)
   const items = []
 
   for (const item of order.items) {
-    const { product, variant } = await productVariantForLine(shopId, item, stocks)
+    const resolved =
+      item.productId && item.variantId
+        ? { product: { id: item.productId }, variant: { id: item.variantId } }
+        : await productVariantForLine(shopId, item, stocks)
     items.push({
-      productId: product.id,
-      variantId: variant.id,
+      productId: resolved.product.id,
+      variantId: resolved.variant?.id || undefined,
       quantity: Number(item.quantity || 0),
       unitPrice: Number(item.unitPrice || 0),
       discount: Number(item.discount || 0),
@@ -431,12 +505,12 @@ export async function refundPaymentAtomic(uid, orderId, details) {
 
 export async function createStockBatch(uid, stock) {
   const shopId = shopIdFrom(uid)
-  const product = await ensureProduct(shopId, stock)
-  const variant = await ensureVariant(shopId, product, stock)
+  const product = stock.productId ? { id: stock.productId } : await ensureProduct(shopId, stock)
+  const variant = stock.variantId ? { id: stock.variantId } : await ensureVariant(shopId, product, stock)
 
   return api.createInventory(shopId, {
     productId: product.id,
-    variantId: variant.id,
+    variantId: variant?.id,
     quantity: Number(stock.quantity || 0),
     unitCost: Number(stock.unitCost || 0),
     receivedAt: stock.date ? new Date(stock.date).toISOString() : undefined,

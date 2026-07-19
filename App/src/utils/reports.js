@@ -76,8 +76,8 @@ export function printSalesReport(rawOrders, settings = {}) {
       itemIndex === 0 ? order.customer.name : '',
       itemIndex === 0 ? order.customer.phone : '',
       item.type,
-      item.size,
-      item.color,
+      item.variantName || item.size,
+      item.variantName ? '' : item.color,
       item.quantity,
       formatKs(item.unitPrice),
       formatKs(item.lineTotal),
@@ -121,7 +121,7 @@ export function printOrderReceipt(rawOrder, settings = {}) {
   const labels = catalogLabels(normalizeCatalogSettings(settings))
   const itemRows = order.items.map((item) => [
     item.type,
-    `${item.size} / ${item.color}`,
+    item.variantName || `${item.size} / ${item.color}`,
     item.quantity,
     formatKs(item.unitPrice),
     item.discount ? `${deductionLabel(item.deductionType)}: ${formatKs(item.discount)}` : '-',
@@ -183,8 +183,8 @@ export function printStockReport(rows, totals, settings = {}) {
         rows.map((row) => [
           row.date,
           row.type,
-          row.size,
-          row.color,
+          row.variantName || row.size,
+          row.variantName ? '' : row.color,
           formatKs(row.unitCost ?? row.price),
           formatKs(row.salePrice ?? row.price),
           row.adjustedQty,

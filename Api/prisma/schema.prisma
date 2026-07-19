@@ -94,6 +94,7 @@ model Product {
   sku         String?
   price       Int
   cost        Int?
+  optionTree  Json             @default("{}")
   isActive    Boolean          @default(true)
   shopId      String
   categoryId  String?
@@ -119,7 +120,10 @@ model ProductVariant {
   option1    String?
   option2    String?
   option3    String?
+  optionPath Json             @default("[]")
+  variantSignature String?
   isActive   Boolean          @default(true)
+  archivedAt DateTime?
   productId  String
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
@@ -128,6 +132,7 @@ model ProductVariant {
   orderItems OrderItem[]
 
   @@unique([productId, sku])
+  @@unique([productId, variantSignature])
   @@index([productId])
 }
 

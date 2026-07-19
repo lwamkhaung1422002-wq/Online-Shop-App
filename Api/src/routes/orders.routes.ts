@@ -285,6 +285,10 @@ ordersRouter.post("/:shopId/orders", async (request, response, next) => {
           throw notFound("Product variant not found.");
         }
 
+        if (variant && (!variant.isActive || variant.archivedAt)) {
+          throw badRequest("Product variant is archived and cannot be sold.");
+        }
+
         const unitPrice = item.unitPrice ?? variant?.price ?? product.price;
         const discount = item.discount ?? 0;
 

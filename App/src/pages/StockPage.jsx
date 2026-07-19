@@ -35,25 +35,46 @@ import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import {
   adjustStockBatch,
+  createProductDocument,
   createStockBatch,
+  createVariantDocument,
   deleteStockBatch,
-  saveCatalogItems,
-  saveCatalogSettings,
+  deleteVariantDocument,
+  updateProductDocument,
+  updateVariantDocument,
 } from '../services/shopApiService.js'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
 import {
   buildStockState,
   formatKs,
   getToday,
+  getItemVariantKey,
   getVariantKey,
 } from '../utils/storage.js'
-import { catalogLabels, normalizeCatalogSettings } from '../utils/catalog.js'
-import { normalizeOrders } from '../domain/orders.js'
+import {
+  catalogLabels,
+  createOptionId,
+  MAX_OPTION_LEVELS,
+  normalizeCatalogSettings,
+  optionPathFromValueIds,
+  optionPathMatchesValueIds,
+  optionValuesForLevel,
+  normalizeOptionPath,
+  normalizeOptionTree,
+  valueIdsFromOptionPath,
+  variantDisplayName,
+  variantOptionValue,
+} from '../utils/catalog.js'
 import useSessionState from '../hooks/useSessionState.js'
 
 const emptyStockForm = {
   date: getToday(),
   deli: 0,
+  productId: '',
+  variantId: '',
+  optionValueIds: [],
+  optionPath: [],
+  variantName: '',
   size: 'Standard',
   color: '',
   type: '',
@@ -62,8 +83,8 @@ const emptyStockForm = {
   quantity: 1,
 }
 
-function getSold(state, size, color, type, from = null, to = null) {
-  const list = state.soldQtyMap[getVariantKey(size, color, type)] || []
+function getSold(state, row, from = null, to = null) {
+  const list = state.soldQtyMap[getItemVariantKey(row)] || []
   return list.reduce((sum, item) => {
     if (from && item.date < from) return sum
     if (to && item.date > to) return sum
@@ -71,8 +92,8 @@ function getSold(state, size, color, type, from = null, to = null) {
   }, 0)
 }
 
-function getAdjustmentQty(state, action, size, color, type, from = null, to = null) {
-  const list = state.adjustmentMap[getVariantKey(size, color, type)] || []
+function getAdjustmentQty(state, action, row, from = null, to = null) {
+  const list = state.adjustmentMap[getItemVariantKey(row)] || []
   return list.reduce((sum, item) => {
     if (item.stockBatchId) return sum
     if (item.action !== action) return sum
@@ -96,11 +117,15 @@ function buildRows(state, filters) {
 
     const unitCost = Number(stock.unitCost ?? stock.cost ?? stock.price ?? 0)
     const salePrice = Number(stock.salePrice ?? stock.price ?? 0)
-    const key = `${stock.date || '-'}__${stock.size}__${stock.color}__${stock.type || '-'}__${unitCost}__${salePrice}`
+    const key = `${stock.date || '-'}__${stock.variantId || getVariantKey(stock.size, stock.color, stock.type)}__${unitCost}__${salePrice}`
 
     if (!grouped[key]) {
       grouped[key] = {
         date: stock.date || '-',
+        productId: stock.productId,
+        variantId: stock.variantId,
+        variantName: stock.variantName,
+        optionPath: stock.optionPath || [],
         size: stock.size,
         color: stock.color,
         type: stock.type || '-',
@@ -123,7 +148,7 @@ function buildRows(state, filters) {
   const itemBuckets = {}
 
   groupedRows.forEach((row) => {
-    const itemKey = getVariantKey(row.size, row.color, row.type)
+    const itemKey = getItemVariantKey(row)
     if (!itemBuckets[itemKey]) itemBuckets[itemKey] = []
     itemBuckets[itemKey].push(row)
   })
@@ -134,10 +159,10 @@ function buildRows(state, filters) {
     bucket.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
 
     const base = bucket[0]
-    let remainingSold = getSold(state, base.size, base.color, base.type, from, to)
+    let remainingSold = getSold(state, base, from, to)
     let remainingAdj =
-      getAdjustmentQty(state, 'ADD', base.size, base.color, base.type, from, to) -
-      getAdjustmentQty(state, 'SUB', base.size, base.color, base.type, from, to)
+      getAdjustmentQty(state, 'ADD', base, from, to) -
+      getAdjustmentQty(state, 'SUB', base, from, to)
 
     bucket.forEach((row) => {
       let adjustedQty = Number(row.quantity || 0)
@@ -202,10 +227,21 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
   const option1Values = data.option1Values?.length ? data.option1Values : catalog.option1Values
   const option2Values = data.option2Values?.length ? data.option2Values : catalog.option2Values
   const mobile = useMediaQuery('(max-width:767px)')
-  const [newType, setNewType] = useState('')
-  const [newOption1, setNewOption1] = useState('')
-  const [newColor, setNewColor] = useState('')
-  const [settingsDraft, setSettingsDraft] = useState(() => normalizeCatalogSettings(data.catalogSettings))
+  const [productDraft, setProductDraft] = useState({
+    id: '',
+    name: '',
+    price: 0,
+    cost: 0,
+    optionTree: normalizeOptionTree(),
+  })
+  const [variantDraft, setVariantDraft] = useState({
+    id: '',
+    optionValueIds: [],
+    price: '',
+    cost: '',
+  })
+  const [settingsBusy, setSettingsBusy] = useState(false)
+  const [stockBusy, setStockBusy] = useState(false)
   const [filters, setFilters] = useSessionState('stock:filters', {
     type: '',
     size: '',
@@ -227,25 +263,40 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
   })
 
   const { rows, totals } = useMemo(() => buildRows(state, filters), [state, filters])
-  const catalogUsage = useMemo(() => {
-    const types = {}
-    const sizes = {}
-    const colors = {}
-    state.stocks.forEach((stock) => {
-      types[stock.type || '-'] = (types[stock.type || '-'] || 0) + 1
-      sizes[stock.size] = (sizes[stock.size] || 0) + 1
-      colors[stock.color] = (colors[stock.color] || 0) + 1
-    })
-    normalizeOrders(data.orders).forEach((order) =>
-      order.items.forEach((item) => {
-        types[item.type] = (types[item.type] || 0) + 1
-        sizes[item.size] = (sizes[item.size] || 0) + 1
-        colors[item.color] = (colors[item.color] || 0) + 1
-      }),
-    )
-    return { types, sizes, colors }
-  }, [data.orders, state.stocks])
-
+  const activeProducts = useMemo(
+    () => (data.products || []).filter((product) => product.isActive !== false),
+    [data.products],
+  )
+  const selectedStockProduct = useMemo(
+    () => activeProducts.find((product) => String(product.id) === String(stockForm.productId)) || null,
+    [activeProducts, stockForm.productId],
+  )
+  const selectedStockTree = useMemo(
+    () => normalizeOptionTree(selectedStockProduct?.optionTree),
+    [selectedStockProduct],
+  )
+  const stockVariants = useMemo(
+    () => (selectedStockProduct?.variants || []).filter((variant) => variant.isActive !== false),
+    [selectedStockProduct],
+  )
+  const selectedStockVariant = useMemo(
+    () => stockVariants.find((variant) => String(variant.id) === String(stockForm.variantId)) || null,
+    [stockForm.variantId, stockVariants],
+  )
+  const currentVariantStock = useMemo(
+    () =>
+      data.stocks
+        .filter((stock) => getItemVariantKey(stock) === getItemVariantKey(stockForm))
+        .reduce((sum, stock) => sum + Number(stock.quantity || 0), 0),
+    [data.stocks, stockForm],
+  )
+  const addQuantity = Number(stockForm.quantity || 0)
+  const newVariantStock = currentVariantStock + Math.max(0, addQuantity)
+  const settingsProduct = useMemo(
+    () => activeProducts.find((product) => String(product.id) === String(productDraft.id)) || null,
+    [activeProducts, productDraft.id],
+  )
+  const settingsTree = useMemo(() => normalizeOptionTree(productDraft.optionTree), [productDraft.optionTree])
   const handleExportStockPDF = async () => {
     const { exportStockPDF } = await import('../utils/reports.js')
     exportStockPDF(rows, totals, catalog)
@@ -255,139 +306,273 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
     setFilters((current) => ({ ...current, [key]: value }))
   }
 
+  const valuesForSelection = (tree, levelIndex, selectedIds = []) =>
+    optionValuesForLevel(tree, levelIndex, levelIndex === 0 ? null : selectedIds[levelIndex - 1])
+
+  const findVariantByValueIds = (variants, valueIds = [], levelCount = 0) =>
+    variants.find((variant) => optionPathMatchesValueIds(variant.optionPath, valueIds.slice(0, levelCount))) || null
+
+  const stockFieldsFromProductVariant = (product, variant = null) => ({
+    productId: product?.id || '',
+    variantId: variant?.id || '',
+    optionValueIds: valueIdsFromOptionPath(variant?.optionPath),
+    type: product?.name || '',
+    size: variantOptionValue(variant, 0, 'Default'),
+    color: variantOptionValue(variant, 1, '-'),
+    variantName: variant ? variantDisplayName(variant) : '',
+    optionPath: variant?.optionPath || [],
+    salePrice: Number(variant?.price ?? product?.price ?? 0) || '',
+    unitCost: Number(variant?.cost ?? product?.cost ?? 0) || '',
+  })
+
+  const stockFieldsFromProductPath = (product, valueIds = []) => {
+    const tree = normalizeOptionTree(product?.optionTree)
+    const path = optionPathFromValueIds(tree, valueIds)
+    const variant = path.length === tree.levels.length
+      ? findVariantByValueIds((product?.variants || []).filter((entry) => entry.isActive !== false), valueIds, tree.levels.length)
+      : null
+    return {
+      ...stockFieldsFromProductVariant(product, variant),
+      optionValueIds: valueIds,
+      optionPath: variant?.optionPath || path,
+    }
+  }
+
+  const updateStockProduct = (productId) => {
+    const product = activeProducts.find((entry) => String(entry.id) === String(productId))
+    const variant = (product?.variants || []).find((entry) => entry.isActive !== false) || null
+    setStockForm((current) => ({ ...current, ...stockFieldsFromProductVariant(product, variant) }))
+  }
+
+  const updateStockOption = (levelIndex, valueId) => {
+    setStockForm((current) => {
+      const nextIds = current.optionValueIds.slice(0, levelIndex)
+      if (valueId) nextIds[levelIndex] = valueId
+      return {
+        ...current,
+        ...stockFieldsFromProductPath(selectedStockProduct, nextIds),
+      }
+    })
+  }
+
+  const loadProductDraft = (product) => {
+    setProductDraft({
+      id: product?.id || '',
+      name: product?.name || '',
+      price: Number(product?.price || 0),
+      cost: Number(product?.cost || 0),
+      optionTree: normalizeOptionTree(product?.optionTree),
+    })
+    const firstVariant = (product?.variants || []).find((variant) => variant.isActive !== false)
+    setVariantDraft({
+      id: firstVariant?.id || '',
+      optionValueIds: valueIdsFromOptionPath(firstVariant?.optionPath),
+      price: firstVariant?.price ?? '',
+      cost: firstVariant?.cost ?? '',
+    })
+  }
+
   const openStockDialog = () => {
     if (requireAuth()) return
 
+    const product = activeProducts[0] || null
+    const variant = (product?.variants || []).find((entry) => entry.isActive !== false) || null
     setStockForm({
       ...emptyStockForm,
-      size: option1Values[0] || 'Standard',
-      color: option2Values[0] || '',
-      type: state.productTypes[0] || '',
+      ...stockFieldsFromProductVariant(product, variant),
     })
     setStockDialogOpen(true)
   }
 
-  const addType = async () => {
+  const updateOptionLevelLabel = (levelIndex, label) => {
+    setProductDraft((current) => {
+      const tree = normalizeOptionTree(current.optionTree)
+      const levels = [...tree.levels]
+      levels[levelIndex] = {
+        id: levels[levelIndex]?.id || `level-${levelIndex + 1}`,
+        level: levelIndex,
+        label,
+      }
+      return { ...current, optionTree: { ...tree, levels: levels.slice(0, Math.max(levelIndex + 1, levels.length)) } }
+    })
+  }
+
+  const addOptionLevel = () => {
+    setProductDraft((current) => {
+      const tree = normalizeOptionTree(current.optionTree)
+      if (tree.levels.length >= MAX_OPTION_LEVELS) return current
+      const nextIndex = tree.levels.length
+      return {
+        ...current,
+        optionTree: {
+          ...tree,
+          levels: [...tree.levels, { id: `level-${nextIndex + 1}`, label: `Option ${nextIndex + 1}`, level: nextIndex }],
+        },
+      }
+    })
+  }
+
+  const removeOptionLevel = () => {
+    setProductDraft((current) => {
+      const tree = normalizeOptionTree(current.optionTree)
+      if (!tree.levels.length) return current
+      const nextLevelCount = tree.levels.length - 1
+      return {
+        ...current,
+        optionTree: {
+          levels: tree.levels.slice(0, nextLevelCount),
+          values: tree.values.filter((value) => value.level < nextLevelCount),
+        },
+      }
+    })
+  }
+
+  const addOptionValue = (level, parentId = null) => {
+    setProductDraft((current) => {
+      const tree = normalizeOptionTree(current.optionTree)
+      const label = `Value ${tree.values.filter((value) => value.level === level).length + 1}`
+      return {
+        ...current,
+        optionTree: {
+          ...tree,
+          values: [
+            ...tree.values,
+            {
+              id: createOptionId(level === 0 ? 'parent' : 'child'),
+              label,
+              level,
+              parentId: level === 0 ? null : parentId,
+            },
+          ],
+        },
+      }
+    })
+  }
+
+  const updateOptionValue = (valueId, label) => {
+    setProductDraft((current) => {
+      const tree = normalizeOptionTree(current.optionTree)
+      return {
+        ...current,
+        optionTree: {
+          ...tree,
+          values: tree.values.map((value) => (value.id === valueId ? { ...value, label } : value)),
+        },
+      }
+    })
+  }
+
+  const removeOptionValue = (valueId) => {
+    setProductDraft((current) => {
+      const tree = normalizeOptionTree(current.optionTree)
+      const removeIds = new Set([valueId])
+      let changed = true
+      while (changed) {
+        changed = false
+        tree.values.forEach((value) => {
+          if (value.parentId && removeIds.has(value.parentId) && !removeIds.has(value.id)) {
+            removeIds.add(value.id)
+            changed = true
+          }
+        })
+      }
+      return {
+        ...current,
+        optionTree: {
+          ...tree,
+          values: tree.values.filter((value) => !removeIds.has(value.id)),
+        },
+      }
+    })
+  }
+
+  const saveProductDraft = async () => {
     if (requireAuth()) return
-
-    const value = newType.trim()
-    if (!value) return
-
-    if (state.productTypes.includes(value)) {
-      notify(`This ${labels.product.toLowerCase()} already exists.`, 'warning')
+    if (!productDraft.name.trim()) {
+      notify('Product name is required.', 'warning')
       return
     }
 
-    await saveCatalogItems(user.uid, 'productTypes', [...state.productTypes, value])
-    setNewType('')
-    refresh()
-  }
-
-  const addOption1 = async () => {
-    if (requireAuth()) return
-
-    const value = newOption1.trim()
-    if (!value) return
-
-    if (option1Values.includes(value)) {
-      notify(`This ${labels.option1.toLowerCase()} already exists.`, 'warning')
-      return
-    }
-
-    await saveCatalogItems(user.uid, 'option1Values', [...option1Values, value])
-    setNewOption1('')
-    refresh()
-  }
-
-  const addColor = async () => {
-    if (requireAuth()) return
-
-    const value = newColor.trim()
-    if (!value) return
-
-    if (option2Values.includes(value)) {
-      notify(`This ${labels.option2.toLowerCase()} already exists.`, 'warning')
-      return
-    }
-
-    await saveCatalogItems(user.uid, 'option2Values', [...option2Values, value])
-    setNewColor('')
-    refresh()
-  }
-
-  const saveLabelSettings = async () => {
-    if (requireAuth()) return
-
+    setSettingsBusy(true)
     try {
-      await saveCatalogSettings(user.uid, settingsDraft)
-      notify('Catalog labels saved.')
+      if (productDraft.id) {
+        await updateProductDocument(user.uid, productDraft.id, productDraft)
+        notify('Product settings saved.')
+      } else {
+        const result = await createProductDocument(user.uid, productDraft)
+        notify('Product created.')
+        loadProductDraft(result.product)
+      }
       refresh()
     } catch (error) {
-      notify(error.message || 'Catalog labels could not be saved.', 'error')
+      notify(error.message || 'Product settings could not be saved.', 'error')
+    } finally {
+      setSettingsBusy(false)
     }
   }
 
-  const deleteType = async (type) => {
-    if (requireAuth()) return
+  const variantPathFromDraft = () => {
+    const tree = normalizeOptionTree(productDraft.optionTree)
+    if (tree.levels.length === 0) return []
+    return optionPathFromValueIds(tree, variantDraft.optionValueIds)
+  }
 
-    if (catalogUsage.types[type]) {
-      notify(`This ${labels.product.toLowerCase()} is already used and cannot be deleted.`, 'warning')
+  const saveVariantDraft = async () => {
+    if (requireAuth()) return
+    if (!productDraft.id) {
+      notify('Save the product before adding variants.', 'warning')
       return
     }
-    setConfirmAction({
-      title: `Delete ${labels.product.toLowerCase()}?`,
-      message: `Delete “${type}” from the catalog?`,
-      run: async () => {
-        await saveCatalogItems(
-          user.uid,
-          'productTypes',
-          state.productTypes.filter((item) => item !== type),
-        )
-        notify(`${labels.product} deleted.`)
-        refresh()
-      },
+
+    const optionPath = variantPathFromDraft()
+    if (settingsTree.levels.length && optionPath.length !== settingsTree.levels.length) {
+      notify('Choose a valid final variant path.', 'warning')
+      return
+    }
+
+    setSettingsBusy(true)
+    try {
+      const payload = {
+        name: optionPath.length ? optionPath.map((entry) => entry.value).join(' / ') : 'Default',
+        price: Number(variantDraft.price || productDraft.price || 0),
+        cost: Number(variantDraft.cost || productDraft.cost || 0),
+        optionPath,
+        isActive: true,
+      }
+      if (variantDraft.id) {
+        await updateVariantDocument(user.uid, productDraft.id, variantDraft.id, payload)
+        notify('Variant saved.')
+      } else {
+        await createVariantDocument(user.uid, productDraft.id, payload)
+        notify('Variant added.')
+      }
+      setVariantDraft({ id: '', optionValueIds: [], price: '', cost: '' })
+      refresh()
+    } catch (error) {
+      notify(error.message || 'Variant could not be saved.', 'error')
+    } finally {
+      setSettingsBusy(false)
+    }
+  }
+
+  const editVariant = (variant) => {
+    const path = normalizeOptionPath(variant.optionPath)
+    setVariantDraft({
+      id: variant.id,
+      optionValueIds: valueIdsFromOptionPath(path),
+      price: variant.price ?? '',
+      cost: variant.cost ?? '',
     })
   }
 
-  const deleteOption1 = async (size) => {
+  const deleteVariant = async (variant) => {
     if (requireAuth()) return
-
-    if (catalogUsage.sizes[size]) {
-      notify(`This ${labels.option1.toLowerCase()} is already used and cannot be deleted.`, 'warning')
-      return
-    }
     setConfirmAction({
-      title: `Delete ${labels.option1.toLowerCase()}?`,
-      message: `Delete "${size}" from the catalog?`,
+      title: 'Archive variant?',
+      message: 'Used variants are archived to preserve stock and order history. Unused variants may be removed by the API.',
       run: async () => {
-        await saveCatalogItems(
-          user.uid,
-          'option1Values',
-          option1Values.filter((item) => item !== size),
-        )
-        notify(`${labels.option1} deleted.`)
-        refresh()
-      },
-    })
-  }
-
-  const deleteColor = async (color) => {
-    if (requireAuth()) return
-
-    if (catalogUsage.colors[color]) {
-      notify(`This ${labels.option2.toLowerCase()} is already used and cannot be deleted.`, 'warning')
-      return
-    }
-    setConfirmAction({
-      title: `Delete ${labels.option2.toLowerCase()}?`,
-      message: `Delete “${color}” from the catalog?`,
-      run: async () => {
-        await saveCatalogItems(
-          user.uid,
-          'option2Values',
-          option2Values.filter((item) => item !== color),
-        )
-        notify(`${labels.option2} deleted.`)
+        await deleteVariantDocument(user.uid, productDraft.id, variant.id)
+        notify('Variant updated.')
         refresh()
       },
     })
@@ -396,13 +581,30 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
   const saveStock = async () => {
     if (requireAuth()) return
 
-    if (!stockForm.date || stockForm.unitCost === '' || stockForm.salePrice === '' || !stockForm.quantity) {
-      notify('Date, cost, sale price, and quantity are required.', 'warning')
+    if (stockBusy) return
+
+    if (!stockForm.productId || !stockForm.date || stockForm.unitCost === '' || stockForm.salePrice === '' || !stockForm.quantity) {
+      notify('Product, date, cost, sale price, and quantity are required.', 'warning')
       return
     }
 
+    if (selectedStockTree.levels.length > 0 && !stockForm.variantId) {
+      notify('Choose a valid final variant before saving stock.', 'warning')
+      return
+    }
+
+    if (Number(stockForm.quantity || 0) <= 0) {
+      notify('Quantity must be greater than zero.', 'warning')
+      return
+    }
+
+    setStockBusy(true)
     try {
       await createStockBatch(user.uid, {
+        productId: stockForm.productId,
+        variantId: stockForm.variantId || undefined,
+        variantName: stockForm.variantName,
+        optionPath: stockForm.optionPath,
         date: stockForm.date,
         deli: Number(stockForm.deli || 0),
         size: stockForm.size,
@@ -418,6 +620,8 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
       refresh()
     } catch (error) {
       notify(error.message || 'Stock could not be added.', 'error')
+    } finally {
+      setStockBusy(false)
     }
   }
 
@@ -481,7 +685,7 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
               variant="outlined"
               startIcon={<SettingsRoundedIcon />}
               onClick={() => {
-                setSettingsDraft(normalizeCatalogSettings(data.catalogSettings))
+                loadProductDraft(activeProducts[0] || null)
                 setSettingsOpen(true)
               }}
             >
@@ -578,7 +782,7 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
               <Box>
                 <Typography fontWeight={900}>{row.type}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {row.size} · {row.color} · {row.date}
+                  {row.size} - {row.color} - {row.date}
                 </Typography>
               </Box>
               <Chip
@@ -720,47 +924,49 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
               slotProps={{ htmlInput: { min: 0 } }}
             />
             <FormControl className="span-6">
-              <InputLabel>{labels.option1}</InputLabel>
-              <Select
-                label={labels.option1}
-                value={stockForm.size}
-                onChange={(event) => setStockForm((current) => ({ ...current, size: event.target.value }))}
-              >
-                {option1Values.map((size) => (
-                  <MenuItem key={size} value={size}>
-                    {size}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl className="span-6">
-              <InputLabel>{labels.option2}</InputLabel>
-              <Select
-                label={labels.option2}
-                value={stockForm.color}
-                onChange={(event) => setStockForm((current) => ({ ...current, color: event.target.value }))}
-              >
-                {option2Values.map((color) => (
-                  <MenuItem key={color} value={color}>
-                    {color}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl className="span-6">
               <InputLabel>{labels.product}</InputLabel>
               <Select
                 label={labels.product}
-                value={stockForm.type}
-                onChange={(event) => setStockForm((current) => ({ ...current, type: event.target.value }))}
+                value={stockForm.productId}
+                onChange={(event) => updateStockProduct(event.target.value)}
               >
-                {state.productTypes.map((type) => (
-                  <MenuItem key={type} value={type}>
-                    {type}
+                {activeProducts.map((product) => (
+                  <MenuItem key={product.id} value={product.id}>
+                    {product.name}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
+            {selectedStockTree.levels.length > 0 ? (
+              <>
+                {selectedStockTree.levels.map((level, levelIndex) => {
+                  const options = valuesForSelection(selectedStockTree, levelIndex, stockForm.optionValueIds)
+                  const disabled = levelIndex > 0 && !stockForm.optionValueIds[levelIndex - 1]
+                  return (
+                    <FormControl key={level.id} className="span-6" disabled={disabled}>
+                      <InputLabel>{level.label}</InputLabel>
+                      <Select
+                        label={level.label}
+                        value={stockForm.optionValueIds[levelIndex] || ''}
+                        onChange={(event) => updateStockOption(levelIndex, event.target.value)}
+                      >
+                        {options.map((value) => (
+                          <MenuItem key={value.id} value={value.id}>
+                            {value.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )
+                })}
+                <TextField
+                  className="span-6"
+                  label="Final variant"
+                  value={selectedStockVariant ? variantDisplayName(selectedStockVariant) : ''}
+                  disabled
+                />
+              </>
+            ) : null}
             <TextField
               className="span-6"
               type="number"
@@ -780,7 +986,7 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
               required
             />
             <TextField
-              className="span-12"
+              className="span-6"
               type="number"
               label="Quantity"
               value={stockForm.quantity}
@@ -788,12 +994,15 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
               slotProps={{ htmlInput: { min: 1 } }}
               required
             />
+            <Alert severity={selectedStockVariant || stockVariants.length === 0 ? 'info' : 'warning'} className="span-6">
+              Current stock: {currentVariantStock} - Add: {Math.max(0, addQuantity)} - New total: {newVariantStock}
+            </Alert>
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setStockDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" color="success" onClick={saveStock}>
-            Save Stock
+          <Button onClick={() => setStockDialogOpen(false)} disabled={stockBusy}>Cancel</Button>
+          <Button variant="contained" color="success" onClick={saveStock} disabled={stockBusy}>
+            {stockBusy ? 'Saving...' : 'Save Stock'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -806,84 +1015,192 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
       >
         <DialogTitle>Stock settings</DialogTitle>
         <DialogContent dividers>
-          <Paper variant="outlined" className="catalog-settings-section" sx={{ mb: 2 }}>
-            <Typography variant="h6">Catalog labels</Typography>
-            <Box className="form-grid" sx={{ mt: 2 }}>
-              <TextField
-                className="span-4"
-                label="Product label"
-                value={settingsDraft.productLabel}
-                onChange={(event) => setSettingsDraft((current) => ({ ...current, productLabel: event.target.value }))}
-              />
-              <TextField
-                className="span-4"
-                label="Product list label"
-                value={settingsDraft.productListLabel}
-                onChange={(event) => setSettingsDraft((current) => ({ ...current, productListLabel: event.target.value }))}
-              />
-              <TextField
-                className="span-4"
-                label="Option 1 label"
-                value={settingsDraft.option1Label}
-                onChange={(event) => setSettingsDraft((current) => ({ ...current, option1Label: event.target.value }))}
-              />
-              <TextField
-                className="span-4"
-                label="Option 2 label"
-                value={settingsDraft.option2Label}
-                onChange={(event) => setSettingsDraft((current) => ({ ...current, option2Label: event.target.value }))}
-              />
-              <TextField
-                className="span-4"
-                label="Option 1 values title"
-                value={settingsDraft.option1ValuesLabel}
-                onChange={(event) => setSettingsDraft((current) => ({ ...current, option1ValuesLabel: event.target.value }))}
-              />
-              <TextField
-                className="span-4"
-                label="Option 2 values title"
-                value={settingsDraft.option2ValuesLabel}
-                onChange={(event) => setSettingsDraft((current) => ({ ...current, option2ValuesLabel: event.target.value }))}
-              />
-            </Box>
-            <Stack direction="row" sx={{ mt: 2, justifyContent: 'flex-end' }}>
-              <Button variant="contained" onClick={saveLabelSettings}>
-                Save labels
+          <Paper variant="outlined" className="catalog-settings-section">
+            <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ justifyContent: 'space-between' }}>
+              <Typography variant="h6">Product stock options</Typography>
+              <Button
+                variant="outlined"
+                onClick={() => loadProductDraft(null)}
+              >
+                New product
               </Button>
             </Stack>
+            <Box className="form-grid" sx={{ mt: 2 }}>
+              <FormControl className="span-4">
+                <InputLabel>{labels.product}</InputLabel>
+                <Select
+                  label={labels.product}
+                  value={productDraft.id}
+                  onChange={(event) => {
+                    const product = activeProducts.find((entry) => String(entry.id) === String(event.target.value))
+                    loadProductDraft(product)
+                  }}
+                >
+                  <MenuItem value="">New product</MenuItem>
+                  {activeProducts.map((product) => (
+                    <MenuItem key={product.id} value={product.id}>
+                      {product.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                className="span-8"
+                label="Product name"
+                value={productDraft.name}
+                onChange={(event) => setProductDraft((current) => ({ ...current, name: event.target.value }))}
+              />
+            </Box>
+            <Stack direction="row" gap={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
+              <Button variant="contained" onClick={saveProductDraft} disabled={settingsBusy}>
+                Save product
+              </Button>
+              <Button variant="outlined" onClick={addOptionLevel} disabled={settingsTree.levels.length >= MAX_OPTION_LEVELS || settingsBusy}>
+                Add option level
+              </Button>
+              <Button color="error" variant="outlined" onClick={removeOptionLevel} disabled={!settingsTree.levels.length || settingsBusy}>
+                Remove last option level
+              </Button>
+            </Stack>
+
+            {settingsTree.levels.map((level, levelIndex) => (
+              <Paper key={level.id} variant="outlined" sx={{ p: 2, mt: 2 }}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ alignItems: { sm: 'center' } }}>
+                  <TextField
+                    label={`Option ${levelIndex + 1} label`}
+                    value={level.label}
+                    onChange={(event) => updateOptionLevelLabel(levelIndex, event.target.value)}
+                    size="small"
+                  />
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      const parent = levelIndex === 0 ? null : optionValuesForLevel(settingsTree, levelIndex - 1)[0]?.id || null
+                      addOptionValue(levelIndex, parent)
+                    }}
+                    disabled={levelIndex > 0 && optionValuesForLevel(settingsTree, levelIndex - 1).length === 0}
+                  >
+                    Add value
+                  </Button>
+                </Stack>
+                <Stack spacing={1} sx={{ mt: 2 }}>
+                  {settingsTree.values
+                    .filter((value) => value.level === levelIndex)
+                    .map((value) => (
+                      <Box key={value.id} className="catalog-setting-row">
+                        <TextField
+                          size="small"
+                          label={level.label}
+                          value={value.label}
+                          onChange={(event) => updateOptionValue(value.id, event.target.value)}
+                        />
+                        {levelIndex > 0 ? (
+                          <FormControl size="small" sx={{ minWidth: 180 }}>
+                            <InputLabel>Parent</InputLabel>
+                            <Select
+                              label="Parent"
+                              value={value.parentId || ''}
+                              onChange={(event) =>
+                                setProductDraft((current) => {
+                                  const tree = normalizeOptionTree(current.optionTree)
+                                  return {
+                                    ...current,
+                                    optionTree: {
+                                      ...tree,
+                                      values: tree.values.map((entry) =>
+                                        entry.id === value.id ? { ...entry, parentId: event.target.value } : entry,
+                                      ),
+                                    },
+                                  }
+                                })
+                              }
+                            >
+                              {optionValuesForLevel(settingsTree, levelIndex - 1).map((parent) => (
+                                <MenuItem key={parent.id} value={parent.id}>
+                                  {parent.label}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        ) : null}
+                        <Button color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => removeOptionValue(value.id)}>
+                          Remove
+                        </Button>
+                      </Box>
+                    ))}
+                </Stack>
+              </Paper>
+            ))}
+
+            {settingsTree.levels.length > 0 ? (
+            <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+              <Typography variant="h6">Product variants</Typography>
+              <Box className="form-grid" sx={{ mt: 2 }}>
+                {settingsTree.levels.map((level, levelIndex) => {
+                  const options = valuesForSelection(settingsTree, levelIndex, variantDraft.optionValueIds)
+                  const disabled = levelIndex > 0 && !variantDraft.optionValueIds[levelIndex - 1]
+                  return (
+                    <FormControl key={level.id} className="span-3" disabled={disabled}>
+                      <InputLabel>{level.label}</InputLabel>
+                      <Select
+                        label={level.label}
+                        value={variantDraft.optionValueIds[levelIndex] || ''}
+                        onChange={(event) =>
+                          setVariantDraft((current) => {
+                            const nextIds = current.optionValueIds.slice(0, levelIndex)
+                            if (event.target.value) nextIds[levelIndex] = event.target.value
+                            return { ...current, optionValueIds: nextIds }
+                          })
+                        }
+                      >
+                        {options.map((value) => (
+                          <MenuItem key={value.id} value={value.id}>
+                            {value.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )
+                })}
+              </Box>
+              <Stack direction="row" gap={1} sx={{ mt: 2 }}>
+                <Button variant="contained" onClick={saveVariantDraft} disabled={settingsBusy || !productDraft.id}>
+                  {variantDraft.id ? 'Save variant' : 'Add variant'}
+                </Button>
+                {variantDraft.id ? (
+                  <Button variant="outlined" onClick={() => setVariantDraft({ id: '', optionValueIds: [], price: '', cost: '' })}>
+                    Clear
+                  </Button>
+                ) : null}
+              </Stack>
+              <Stack spacing={1} sx={{ mt: 2 }}>
+                {(settingsProduct?.variants || []).map((variant) => (
+                  <Box key={variant.id} className="catalog-setting-row">
+                    <Box>
+                      <Typography fontWeight={800}>{variantDisplayName(variant)}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Price {formatKs(variant.price ?? productDraft.price)} - Cost {formatKs(variant.cost ?? productDraft.cost)}
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" gap={1}>
+                      <Button size="small" variant="outlined" onClick={() => editVariant(variant)}>
+                        Edit
+                      </Button>
+                      <Button size="small" color="error" variant="outlined" onClick={() => deleteVariant(variant)}>
+                        Archive
+                      </Button>
+                    </Stack>
+                  </Box>
+                ))}
+                {productDraft.id && !(settingsProduct?.variants || []).length ? (
+                  <Box className="empty-state compact">
+                    <Typography color="text.secondary">No variants added yet.</Typography>
+                  </Box>
+                ) : null}
+              </Stack>
+            </Paper>
+            ) : null}
           </Paper>
-          <Box className="catalog-settings-grid">
-            <CatalogSection
-              title={labels.productPlural}
-              inputLabel={`Add ${labels.product.toLowerCase()}`}
-              value={newType}
-              onChange={setNewType}
-              onAdd={addType}
-              items={state.productTypes}
-              usage={catalogUsage.types}
-              onDelete={deleteType}
-            />
-            <CatalogSection
-              title={labels.option1Values}
-              inputLabel={`Add ${labels.option1.toLowerCase()}`}
-              value={newOption1}
-              onChange={setNewOption1}
-              onAdd={addOption1}
-              items={option1Values}
-              usage={catalogUsage.sizes}
-              onDelete={deleteOption1}
-            />
-            <CatalogSection
-              title={labels.option2Values}
-              inputLabel={`Add ${labels.option2.toLowerCase()}`}
-              value={newColor}
-              onChange={setNewColor}
-              onAdd={addColor}
-              items={option2Values}
-              usage={catalogUsage.colors}
-              onDelete={deleteColor}
-            />
-          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSettingsOpen(false)}>Done</Button>
@@ -957,57 +1274,11 @@ export default function StockPage({ refresh, requireAuth = () => false }) {
             Cancel
           </Button>
           <Button variant="contained" onClick={saveAdjustment} disabled={confirmBusy}>
-            {confirmBusy ? 'Saving…' : 'Save adjustment'}
+            {confirmBusy ? 'Saving...' : 'Save adjustment'}
           </Button>
         </DialogActions>
       </Dialog>
     </Box>
-  )
-}
-
-function CatalogSection({ title, inputLabel, value, onChange, onAdd, items, usage, onDelete }) {
-  return (
-    <Paper variant="outlined" className="catalog-settings-section">
-      <Typography variant="h6">{title}</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ mt: 2 }}>
-        <TextField
-          label={inputLabel}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          size="small"
-          fullWidth
-        />
-        <Button variant="contained" onClick={onAdd}>
-          Add
-        </Button>
-      </Stack>
-      <Stack spacing={1} sx={{ mt: 2 }}>
-        {items.map((item) => (
-          <Box key={item} className="catalog-setting-row">
-            <Box>
-              <Typography fontWeight={800}>{item}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                Used in {usage[item] || 0} record(s)
-              </Typography>
-            </Box>
-            <Button
-              size="small"
-              color="error"
-              startIcon={<DeleteOutlineRoundedIcon />}
-              disabled={Boolean(usage[item])}
-              onClick={() => onDelete(item)}
-            >
-              Delete
-            </Button>
-          </Box>
-        ))}
-        {!items.length ? (
-          <Box className="empty-state compact">
-            <Typography color="text.secondary">No items configured.</Typography>
-          </Box>
-        ) : null}
-      </Stack>
-    </Paper>
   )
 }
 

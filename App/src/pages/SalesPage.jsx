@@ -71,7 +71,7 @@ function ItemsSummary({ order }) {
     <Stack spacing={0.25}>
       {order.items.slice(0, 2).map((item) => (
         <Typography key={item.id} variant="body2">
-          {item.quantity}× {item.type} · {item.size} · {item.color}
+          {item.quantity}× {item.type} · {item.variantName || [item.size, item.color].filter(Boolean).join(' / ')}
         </Typography>
       ))}
       {order.items.length > 2 ? (
@@ -415,7 +415,7 @@ export default function SalesPage({ navigate }) {
           sx={{ justifyContent: 'space-between' }}
         >
           <Typography>
-            <strong>{filteredOrders.length}</strong> orders · <strong>{totals.quantity}</strong> items
+            <strong>{filteredOrders.length}</strong> orders - <strong>{totals.quantity}</strong> items
           </Typography>
           <Typography fontWeight={900}>Total: {formatKs(totals.amount)}</Typography>
         </Stack>
@@ -454,7 +454,7 @@ function MobileOrderCard({ order, busy, onPrint, onToggle, onFulfill, onCancel, 
             {order.customer.name || 'Unnamed customer'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {order.date} · {order.customer.phone || 'No phone'}
+            {order.date} - {order.customer.phone || 'No phone'}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             #{order.id.slice(0, 10)}
@@ -655,7 +655,7 @@ function DetailField({ label, value }) {
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
-      <Typography sx={{ overflowWrap: 'anywhere' }}>{value || '—'}</Typography>
+      <Typography sx={{ overflowWrap: 'anywhere' }}>{value || '-'}</Typography>
     </Box>
   )
 }
@@ -683,7 +683,7 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
                 Order details
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                #{order.id} · {order.date}
+                #{order.id} - {order.date}
               </Typography>
             </Box>
             <IconButton aria-label="Close order details" onClick={onClose}>
@@ -739,10 +739,10 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
                       {index + 1}. {item.type}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {item.size} · {item.color}
+                      {item.variantName || [item.size, item.color].filter(Boolean).join(' / ')}
                     </Typography>
                     <Typography variant="body2">
-                      {item.quantity} × {formatKs(item.unitPrice)}
+                      {item.quantity} x {formatKs(item.unitPrice)}
                     </Typography>
                     {item.discount ? (
                       <Typography variant="caption" color="text.secondary">
@@ -798,3 +798,4 @@ function OrderDetailsDrawer({ order, mobile, onClose, onPrint }) {
     </Drawer>
   )
 }
+

@@ -71,11 +71,15 @@ async function assertVariantBelongsToProduct(
       id: variantId,
       productId,
     },
-    select: { id: true },
+    select: { id: true, isActive: true, archivedAt: true },
   });
 
   if (!variant) {
     throw notFound("Product variant not found.");
+  }
+
+  if (!variant.isActive || variant.archivedAt) {
+    throw badRequest("Product variant is archived and cannot receive new stock.");
   }
 }
 
