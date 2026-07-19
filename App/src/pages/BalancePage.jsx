@@ -39,20 +39,20 @@ import { useFeedback } from '../contexts/FeedbackContext.jsx'
 import { calculateFinancialSummary } from '../domain/finance.js'
 import { isRevenueRecognized, normalizeOrders } from '../domain/orders.js'
 import {
-  EXPENSE_METHODS,
   buildProfitState,
   formatKs,
   getReceivedByMethod,
   getToday,
 } from '../utils/storage.js'
+import { activePaymentMethods } from '../utils/catalog.js'
 
-const fallbackExpenseTypes = ['Elegence', 'Long', 'Short']
+const fallbackExpenseTypes = ['General', 'Operations', 'Marketing']
 
 const emptyExpenseForm = {
   title: '',
   amount: '',
   type: fallbackExpenseTypes[0],
-  method: EXPENSE_METHODS[0],
+  method: 'Cash',
   date: getToday(),
   note: '',
 }
@@ -80,12 +80,13 @@ function getTypeProfit(records, expenses) {
   return map
 }
 
-export default function BalancePage({ refresh }) {
+export default function BalancePage({ refresh, requireAuth }) {
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
   const state = useMemo(() => buildProfitState(data), [data])
   const typeOptions = state.productTypes.length ? state.productTypes : fallbackExpenseTypes
+  const expenseMethods = activePaymentMethods(data.catalogSettings).filter((method) => method.type === 'normal')
   const [expenseForm, setExpenseForm] = useState({
     ...emptyExpenseForm,
     type: typeOptions[0] || fallbackExpenseTypes[0],
@@ -127,6 +128,7 @@ export default function BalancePage({ refresh }) {
   }
 
   const addExpense = async () => {
+    if (requireAuth?.('save expense')) return
     if (!expenseForm.title || !expenseForm.amount) {
       notify('Expense title and amount are required.', 'warning')
       return
@@ -166,6 +168,7 @@ export default function BalancePage({ refresh }) {
   }
 
   const deleteExpense = async (id) => {
+    if (requireAuth?.('delete expense')) return
     try {
       await deleteExpenseDocument(user.uid, id)
       notify('Expense deleted.')
@@ -325,9 +328,9 @@ export default function BalancePage({ refresh }) {
           <FormControl className="span-3">
             <InputLabel>Method</InputLabel>
             <Select label="Method" value={expenseForm.method} onChange={(event) => updateExpenseForm('method', event.target.value)}>
-              {EXPENSE_METHODS.map((method) => (
-                <MenuItem key={method} value={method}>
-                  {method}
+              {(expenseMethods.length ? expenseMethods : activePaymentMethods(data.catalogSettings)).map((method) => (
+                <MenuItem key={method.id} value={method.name}>
+                  {method.name}
                 </MenuItem>
               ))}
             </Select>

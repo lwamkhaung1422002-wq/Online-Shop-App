@@ -5,6 +5,7 @@ export const routeLoaders = {
   finance: () => import('./pages/FinancePage.jsx'),
   balance: () => import('./pages/BalancePage.jsx'),
   order: () => import('./pages/OrderPage.jsx'),
+  settings: () => import('./pages/AppSettingsPage.jsx'),
 }
 
 const preloadCache = new Map()
@@ -20,4 +21,3 @@ export function preloadRoute(route) {
 export function preloadAllRoutes() {
   return Promise.allSettled(Object.keys(routeLoaders).map(preloadRoute))
 }
-

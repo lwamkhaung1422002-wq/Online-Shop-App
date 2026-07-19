@@ -25,8 +25,10 @@ import AccountBalanceWalletRoundedIcon from '@mui/icons-material/AccountBalanceW
 import AddShoppingCartRoundedIcon from '@mui/icons-material/AddShoppingCartRounded'
 import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded'
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded'
+import RocketLaunchRoundedIcon from '@mui/icons-material/RocketLaunchRounded'
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded'
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
+import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded'
 import { preloadRoute } from '../routes.js'
 
 const drawerWidth = 224
@@ -38,6 +40,7 @@ const navItems = [
   { key: 'finance', label: 'Finance', icon: <AccountBalanceWalletRoundedIcon /> },
   { key: 'balance', label: 'Balance', icon: <TrendingUpRoundedIcon /> },
   { key: 'order', label: 'Order', icon: <AddShoppingCartRoundedIcon /> },
+  { key: 'settings', label: 'Settings', icon: <SettingsRoundedIcon /> },
 ]
 
 export default function AppLayout({
@@ -108,11 +111,11 @@ export default function AppLayout({
           <Button
             size="small"
             variant="outlined"
-            startIcon={<LogoutRoundedIcon />}
+            startIcon={preview ? <RocketLaunchRoundedIcon /> : <LogoutRoundedIcon />}
             onClick={preview ? onGetStarted : onLogout}
             sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
           >
-            {preview ? 'Login / Register' : 'Logout'}
+            {preview ? 'Get Started' : 'Logout'}
           </Button>
         </Toolbar>
       </AppBar>
@@ -184,7 +187,7 @@ export default function AppLayout({
           ))}
           <BottomNavigationAction
             label="More"
-            value={['finance', 'balance'].includes(page) ? page : 'more'}
+            value={['finance', 'balance', 'settings'].includes(page) ? page : 'more'}
             icon={<MoreHorizRoundedIcon />}
             onClick={(event) => setMoreAnchor(event.currentTarget)}
           />
@@ -199,7 +202,7 @@ export default function AppLayout({
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
         {navItems
-          .filter((item) => ['finance', 'balance'].includes(item.key))
+          .filter((item) => ['finance', 'balance', 'settings'].includes(item.key))
           .map((item) => (
             <MenuItem
               key={item.key}
@@ -223,9 +226,9 @@ export default function AppLayout({
           }}
         >
           <ListItemIcon>
-            <LogoutRoundedIcon />
+            {preview ? <RocketLaunchRoundedIcon /> : <LogoutRoundedIcon />}
           </ListItemIcon>
-          {preview ? 'Login / Register' : 'Logout'}
+          {preview ? 'Get Started' : 'Logout'}
         </MenuItem>
       </Menu>
 

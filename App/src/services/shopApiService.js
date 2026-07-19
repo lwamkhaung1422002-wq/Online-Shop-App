@@ -5,6 +5,7 @@ import {
   normalizeCatalogSettings,
   normalizeOptionPath,
   normalizeOptionTree,
+  isCodPaymentMethod,
   uniqueCatalogValues,
   variantDisplayName,
   variantOptionValue,
@@ -337,10 +338,11 @@ async function productVariantForLine(shopId, line, stocks = []) {
 }
 
 function paymentPayload(details, amount) {
+  const isCod = details.isCod ?? isCodPaymentMethod(details.method, details.settings || {})
   return {
     method: details.method,
     amount,
-    billNumber: details.method === 'COD' ? details.billNumber : undefined,
+    billNumber: isCod ? details.billNumber : undefined,
     transactionId: details.transactionId,
     note: details.note,
     paidAt: details.date ? new Date(details.date).toISOString() : undefined,
@@ -368,6 +370,10 @@ export async function saveCatalogItems(uid, key, items) {
 
 export async function saveCatalogSettings(uid, settings) {
   return api.updateShopSettings(shopIdFrom(uid), settings)
+}
+
+export async function savePaymentMethods(uid, paymentMethods) {
+  return api.updateShopSettings(shopIdFrom(uid), { paymentMethods })
 }
 
 export async function createProductDocument(uid, product) {
@@ -433,7 +439,7 @@ export async function createOrderAtomic(uid, order, stocks, _existingOrders, pay
   }
 
   const result = await api.createOrder(shopId, {
-    customer: order.customer,
+    customer: order.orderType === 'in-store' ? undefined : order.customer,
     fulfillmentStatus: order.fulfillmentStatus === 'preorder' ? 'preorder' : 'reserved',
     discount: Number(order.discount || 0),
     deliveryFee: Number(order.deliveryFee || 0),
@@ -444,6 +450,10 @@ export async function createOrderAtomic(uid, order, stocks, _existingOrders, pay
 
   if (paymentDetails) {
     await api.receivePayment(shopId, result.order.id, paymentPayload(paymentDetails, Number(result.order.total || 0)))
+  }
+
+  if (order.orderType === 'in-store') {
+    await api.completeOrder(shopId, result.order.id, 'completed')
   }
 
   return result.order

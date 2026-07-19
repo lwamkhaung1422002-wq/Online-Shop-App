@@ -1,17 +1,18 @@
 import { normalizeOrders } from './orders.js'
+import { activePaymentMethods, isCodPaymentMethod } from '../utils/catalog.js'
 
-export const PAYMENT_METHODS = ['COD', 'KBZ Pay 1', 'KBZ Pay 2', 'WavePay', 'AyaPay', 'Other']
+export const PAYMENT_METHODS = ['COD', 'Cash', 'Other']
 
 export function digitsOnly(value) {
   return String(value || '').replace(/\D/g, '').slice(0, 6)
 }
 
 export function paymentReference(details) {
-  return details.method === 'COD' ? details.billNumber : details.transactionId
+  return details.isCod || details.method === 'COD' ? details.billNumber : details.transactionId
 }
 
 export function paymentReferences(details) {
-  if (details.method === 'COD') {
+  if (details.isCod || details.method === 'COD') {
     return [
       { kind: 'bill', field: 'billNumber', value: String(details.billNumber || '') },
       { kind: 'transaction', field: 'transactionId', value: String(details.transactionId || '') },
@@ -23,9 +24,11 @@ export function paymentReferences(details) {
 }
 
 export function validatePaymentDetails(details) {
-  if (!PAYMENT_METHODS.includes(details.method)) return 'Choose a valid payment method.'
+  const methods = details.settings ? activePaymentMethods(details.settings).map((method) => method.name) : PAYMENT_METHODS
+  const isCod = details.isCod ?? isCodPaymentMethod(details.method, details.settings || {})
+  if (!methods.includes(details.method)) return 'Choose a valid payment method.'
   if (!details.date) return 'Payment date is required.'
-  if (details.method === 'COD' && !/^\d{6}$/.test(String(details.billNumber || ''))) {
+  if (isCod && !/^\d{6}$/.test(String(details.billNumber || ''))) {
     return 'COD reference must be exactly 6 digits.'
   }
   if (!/^\d{6}$/.test(String(details.transactionId || ''))) {
@@ -35,7 +38,7 @@ export function validatePaymentDetails(details) {
 }
 
 export function validateCodSettlement(allocations, details) {
-  const paymentError = validatePaymentDetails({ ...details, method: 'COD' })
+  const paymentError = validatePaymentDetails({ ...details, isCod: true })
   if (paymentError) return paymentError
   if (!Array.isArray(allocations) || allocations.length < 1) {
     return 'Select at least one outstanding order.'
@@ -58,7 +61,7 @@ export function validateCodSettlement(allocations, details) {
 
 export function paymentReferenceKey(details, reference = paymentReferences(details)[0]) {
   const method = String(details.method || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
-  const kind = details.method === 'COD' ? `-${reference.kind}` : ''
+  const kind = details.isCod || details.method === 'COD' ? `-${reference.kind}` : ''
   return `${method}${kind}__${reference.value}`
 }
 

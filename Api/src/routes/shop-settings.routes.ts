@@ -21,7 +21,25 @@ const catalogSettingsSchema = z.object({
   option2ValuesLabel: z.string().trim().min(1).max(40).optional(),
   option1Values: z.array(z.string().trim().min(1).max(80)).max(200).optional(),
   option2Values: z.array(z.string().trim().min(1).max(80)).max(200).optional(),
+  paymentMethods: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(80),
+        name: z.string().trim().min(1).max(80),
+        type: z.enum(["normal", "cod"]).default("normal"),
+        active: z.boolean().default(true),
+        sortOrder: z.coerce.number().int().nonnegative().default(0),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
+
+const defaultPaymentMethods = [
+  { id: "cod", name: "COD", type: "cod", active: true, sortOrder: 0 },
+  { id: "cash", name: "Cash", type: "normal", active: true, sortOrder: 1 },
+  { id: "kbz-pay", name: "KBZ Pay", type: "normal", active: true, sortOrder: 2 },
+] as const;
 
 const defaultCatalogSettings = {
   productLabel: "Product",
@@ -33,6 +51,7 @@ const defaultCatalogSettings = {
   option2ValuesLabel: "Option 2 Values",
   option1Values: JSON.stringify(["Standard"]),
   option2Values: JSON.stringify(["General"]),
+  paymentMethods: JSON.stringify(defaultPaymentMethods),
 };
 
 function uniqueValues(values: string[] | undefined) {
@@ -40,11 +59,40 @@ function uniqueValues(values: string[] | undefined) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
-function toResponseSettings<T extends { option1Values: string; option2Values: string }>(settings: T) {
+function normalizePaymentMethods(methods: z.infer<typeof catalogSettingsSchema>["paymentMethods"] | undefined) {
+  if (!methods) return undefined;
+  const seen = new Set<string>();
+  return methods
+    .map((method, index) => ({
+      id: method.id.trim(),
+      name: method.name.trim(),
+      type: method.type,
+      active: method.active,
+      sortOrder: method.sortOrder ?? index,
+    }))
+    .filter((method) => {
+      const key = method.id.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function parseJsonFallback<T>(value: string | null | undefined, fallback: T): T {
+  try {
+    return value ? (JSON.parse(value) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function toResponseSettings<T extends { option1Values: string; option2Values: string; paymentMethods: string }>(settings: T) {
   return {
     ...settings,
-    option1Values: JSON.parse(settings.option1Values) as string[],
-    option2Values: JSON.parse(settings.option2Values) as string[],
+    option1Values: parseJsonFallback(settings.option1Values, [] as string[]),
+    option2Values: parseJsonFallback(settings.option2Values, [] as string[]),
+    paymentMethods: parseJsonFallback(settings.paymentMethods, [...defaultPaymentMethods]),
   };
 }
 
@@ -97,6 +145,7 @@ shopSettingsRouter.patch("/:shopId/settings", async (request, response, next) =>
         ...(input.option2ValuesLabel !== undefined ? { option2ValuesLabel: input.option2ValuesLabel } : {}),
         ...(input.option1Values !== undefined ? { option1Values: JSON.stringify(uniqueValues(input.option1Values)) } : {}),
         ...(input.option2Values !== undefined ? { option2Values: JSON.stringify(uniqueValues(input.option2Values)) } : {}),
+        ...(input.paymentMethods !== undefined ? { paymentMethods: JSON.stringify(normalizePaymentMethods(input.paymentMethods)) } : {}),
       },
     });
 

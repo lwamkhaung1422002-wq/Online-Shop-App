@@ -4,7 +4,6 @@ import { buildPaymentReconciliation, PAYMENT_METHODS } from '../domain/payments.
 export const SIZE_OPTIONS = ['Size 1', 'Size 2', 'Other']
 export const SOURCE_OPTIONS = ['Telegram', 'TikTok', 'Messenger']
 export { PAYMENT_METHODS }
-export const EXPENSE_METHODS = ['KBZ Pay', 'WavePay', 'AyaPay', 'Other']
 
 export function safeParse(key, fallback) {
   try {
@@ -29,6 +28,10 @@ export function formatKs(value) {
 
 export function getVariantKey(size, color, type) {
   return `${size}__${color}__${type || '-'}`
+}
+
+export function getStockVariantKey(item = {}) {
+  return item.variantId ? `variant:${item.variantId}` : getVariantKey(item.size, item.color, item.type)
 }
 
 export function readRecords() {
@@ -100,7 +103,7 @@ export function buildAppState(source = readLocalData()) {
 
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getStockVariantKey(item)
       soldByVariant[key] = (soldByVariant[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -120,7 +123,7 @@ export function buildStockState(source = readLocalData()) {
   normalizeOrders(source.orders?.length ? source.orders : flattenRecords(records)).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getStockVariantKey(item)
       if (!soldQtyMap[key]) soldQtyMap[key] = []
       soldQtyMap[key].push({
         date: order.date,
@@ -130,7 +133,7 @@ export function buildStockState(source = readLocalData()) {
   })
 
   adjustments.forEach((adjustment) => {
-    const key = getVariantKey(adjustment.size, adjustment.color, adjustment.type)
+    const key = getStockVariantKey(adjustment)
     if (!adjustmentMap[key]) adjustmentMap[key] = []
     adjustmentMap[key].push(adjustment)
   })
@@ -153,7 +156,7 @@ export function buildSalesState(source = readLocalData()) {
 
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getStockVariantKey(item)
       soldByVariant[key] = (soldByVariant[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -196,7 +199,7 @@ export function buildOrderState(source = readLocalData()) {
   const stockPriceMap = {}
 
   stocks.forEach((stock) => {
-    const key = getVariantKey(stock.size, stock.color, stock.type)
+    const key = getStockVariantKey(stock)
     stockQtyMap[key] = (stockQtyMap[key] || 0) + Number(stock.quantity || 0)
 
     if (!(key in stockPriceMap)) {
@@ -207,7 +210,7 @@ export function buildOrderState(source = readLocalData()) {
   normalizeOrders(source.orders?.length ? source.orders : flattenRecords(records)).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getStockVariantKey(item)
       soldQtyMap[key] = (soldQtyMap[key] || 0) + Number(item.quantity || 0)
     })
   })

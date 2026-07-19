@@ -8,6 +8,11 @@ export const defaultCatalogSettings = {
   option2ValuesLabel: 'Option 2 Values',
   option1Values: ['Standard'],
   option2Values: ['General'],
+  paymentMethods: [
+    { id: 'cod', name: 'COD', type: 'cod', active: true, sortOrder: 0 },
+    { id: 'cash', name: 'Cash', type: 'normal', active: true, sortOrder: 1 },
+    { id: 'kbz-pay', name: 'KBZ Pay', type: 'normal', active: true, sortOrder: 2 },
+  ],
 }
 
 export const MAX_OPTION_LEVELS = 5
@@ -17,12 +22,56 @@ export function uniqueCatalogValues(values) {
 }
 
 export function normalizeCatalogSettings(settings = {}) {
+  const paymentMethods = normalizePaymentMethods(
+    settings.paymentMethods?.length ? settings.paymentMethods : defaultCatalogSettings.paymentMethods,
+  )
   return {
     ...defaultCatalogSettings,
     ...settings,
     option1Values: uniqueCatalogValues(settings.option1Values?.length ? settings.option1Values : defaultCatalogSettings.option1Values),
     option2Values: uniqueCatalogValues(settings.option2Values?.length ? settings.option2Values : defaultCatalogSettings.option2Values),
+    paymentMethods,
   }
+}
+
+export function createSlugId(value, prefix = 'item') {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || createOptionId(prefix)
+}
+
+export function normalizePaymentMethods(methods = []) {
+  const seen = new Set()
+  return (Array.isArray(methods) ? methods : [])
+    .map((method, index) => ({
+      id: String(method.id || createSlugId(method.name, 'method')).trim(),
+      name: String(method.name || '').trim(),
+      type: method.type === 'cod' ? 'cod' : 'normal',
+      active: method.active !== false,
+      sortOrder: Number.isFinite(Number(method.sortOrder)) ? Number(method.sortOrder) : index,
+    }))
+    .filter((method) => {
+      if (!method.id || !method.name) return false
+      const key = method.id.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+}
+
+export function activePaymentMethods(settings = {}) {
+  return normalizeCatalogSettings(settings).paymentMethods.filter((method) => method.active)
+}
+
+export function isCodPaymentMethod(methodName, settings = {}) {
+  const method = normalizeCatalogSettings(settings).paymentMethods.find(
+    (entry) => entry.name === methodName || entry.id === methodName,
+  )
+  return method?.type === 'cod'
 }
 
 export function catalogLabels(settings = {}) {

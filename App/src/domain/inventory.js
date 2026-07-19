@@ -1,4 +1,4 @@
-import { getVariantKey } from '../utils/storage.js'
+import { getStockVariantKey, getVariantKey } from '../utils/storage.js'
 import { isStockReserved, normalizeOrders } from './orders.js'
 
 export function sortStockBatches(stocks = []) {
@@ -32,7 +32,7 @@ export function getLegacyReservedByVariant(orders = []) {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
       if (item.allocations.length) return
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getStockVariantKey(item)
       reserved[key] = (reserved[key] || 0) + Number(item.quantity || 0)
     })
   })
@@ -47,9 +47,9 @@ export function allocateFifo(stocks, orders, requestedItems) {
   const allocations = []
 
   for (const requested of requestedItems) {
-    const key = getVariantKey(requested.size, requested.color, requested.type)
+    const key = getStockVariantKey(requested)
     const batches = sortStockBatches(stocks).filter(
-      (stock) => getVariantKey(stock.size, stock.color, stock.type) === key,
+      (stock) => getStockVariantKey(stock) === key,
     )
 
     let legacyRemaining = legacyByVariant[key] || 0
@@ -135,14 +135,14 @@ export function getReservationBaseline(stocks = [], orders = []) {
 export function getAvailableByVariant(stocks = [], orders = []) {
   const totals = {}
   stocks.forEach((stock) => {
-    const key = getVariantKey(stock.size, stock.color, stock.type)
+      const key = getStockVariantKey(stock)
     totals[key] = (totals[key] || 0) + Number(stock.quantity || 0)
   })
 
   normalizeOrders(orders).forEach((order) => {
     if (!isStockReserved(order)) return
     order.items.forEach((item) => {
-      const key = getVariantKey(item.size, item.color, item.type)
+      const key = getStockVariantKey(item)
       totals[key] = (totals[key] || 0) - Number(item.quantity || 0)
     })
   })

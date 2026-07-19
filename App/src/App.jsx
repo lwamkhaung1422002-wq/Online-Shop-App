@@ -16,6 +16,7 @@ const StockPage = lazy(routeLoaders.stock)
 const FinancePage = lazy(routeLoaders.finance)
 const BalancePage = lazy(routeLoaders.balance)
 const OrderPage = lazy(routeLoaders.order)
+const AppSettingsPage = lazy(routeLoaders.settings)
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'))
 
 const pages = {
@@ -25,6 +26,7 @@ const pages = {
   finance: FinancePage,
   balance: BalancePage,
   order: OrderPage,
+  settings: AppSettingsPage,
 }
 
 const theme = createTheme({

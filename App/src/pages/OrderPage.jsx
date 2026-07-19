@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -25,57 +25,44 @@ import PageHeader from '../components/PageHeader.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
+import { allocateFifo, getAvailableByVariant } from '../domain/inventory.js'
+import { calculateOrderTotals, lineTotal } from '../domain/orders.js'
+import { digitsOnly, validatePaymentDetails } from '../domain/payments.js'
 import { createOrderAtomic } from '../services/shopApiService.js'
-import { allocateFifo, getAvailableByVariant, sortStockBatches } from '../domain/inventory.js'
-import { calculateOrderTotals, deductionLabel, lineTotal } from '../domain/orders.js'
-import {
-  digitsOnly,
-  PAYMENT_METHODS,
-  validatePaymentDetails,
-} from '../domain/payments.js'
-import {
-  SIZE_OPTIONS,
-  SOURCE_OPTIONS,
-  formatKs,
-  getToday,
-  getVariantKey,
-} from '../utils/storage.js'
+import { activePaymentMethods, isCodPaymentMethod, variantDisplayName } from '../utils/catalog.js'
+import { formatKs, getStockVariantKey, getToday, SOURCE_OPTIONS } from '../utils/storage.js'
 
 function initialLine(data) {
+  const product = data.products[0]
+  const variant = product?.variants?.[0]
   return {
-    type: data.productTypes[0] || '',
-    size: SIZE_OPTIONS[0],
-    color: data.productColors[0] || '',
+    productId: product?.id || '',
+    variantId: variant?.id || '',
     quantity: 1,
-    unitPrice: '',
+    unitPrice: variant?.price ?? product?.price ?? '',
     discount: 0,
-    deductionType: 'discount',
   }
 }
 
-function defaultPrice(stocks, line) {
-  const batch = sortStockBatches(stocks)
-    .filter(
-      (stock) =>
-        getVariantKey(stock.size, stock.color, stock.type) ===
-        getVariantKey(line.size, line.color, line.type),
-    )
-    .at(-1)
-  return Number(batch?.salePrice ?? batch?.price ?? 0)
+function stockForVariant(stocks, productId, variantId) {
+  return stocks.find(
+    (stock) =>
+      String(stock.productId) === String(productId) &&
+      String(stock.variantId || '') === String(variantId || ''),
+  )
 }
 
-export default function OrderPage({ navigate }) {
+export default function OrderPage({ navigate, requireAuth }) {
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
-  const [customer, setCustomer] = useState({
-    name: '',
-    phone: '',
-    city: '',
-    address: '',
-  })
+  const settings = data.catalogSettings || {}
+  const paymentMethods = activePaymentMethods(settings)
+  const defaultMethod = paymentMethods[0]?.name || 'Cash'
+  const [orderType, setOrderType] = useState('online')
+  const [customer, setCustomer] = useState({ name: '', phone: '', city: '', address: '' })
   const [date, setDate] = useState(getToday)
-  const [source, setSource] = useState('Telegram')
+  const [source, setSource] = useState(SOURCE_OPTIONS[0] || 'Telegram')
   const [remark, setRemark] = useState('')
   const [preorder, setPreorder] = useState(false)
   const [orderDiscount, setOrderDiscount] = useState(0)
@@ -85,189 +72,136 @@ export default function OrderPage({ navigate }) {
   const [saving, setSaving] = useState(false)
   const [paymentMode, setPaymentMode] = useState('unpaid')
   const [payment, setPayment] = useState({
-    method: 'COD',
+    method: defaultMethod,
     billNumber: '',
     transactionId: '',
     date: getToday(),
     note: '',
   })
 
-  const availableMap = useMemo(
-    () => getAvailableByVariant(data.stocks, data.orders),
-    [data.orders, data.stocks],
-  )
-  const available = Number(
-    availableMap[getVariantKey(lineDraft.size, lineDraft.color, lineDraft.type)] || 0,
-  )
-  const suggestedPrice = defaultPrice(data.stocks, lineDraft)
-  const totals = useMemo(
-    () => calculateOrderTotals(items, orderDiscount, deliveryFee),
-    [deliveryFee, items, orderDiscount],
-  )
+  const selectedProduct = data.products.find((product) => String(product.id) === String(lineDraft.productId))
+  const selectedVariant = selectedProduct?.variants?.find((variant) => String(variant.id) === String(lineDraft.variantId))
+  const representativeStock = stockForVariant(data.stocks, lineDraft.productId, lineDraft.variantId)
+  const availableMap = useMemo(() => getAvailableByVariant(data.stocks, data.orders), [data.orders, data.stocks])
+  const available = Number(availableMap[getStockVariantKey({ productId: lineDraft.productId, variantId: lineDraft.variantId })] || 0)
+  const totals = useMemo(() => calculateOrderTotals(items, orderDiscount, orderType === 'online' ? deliveryFee : 0), [deliveryFee, items, orderDiscount, orderType])
+  const payNow = orderType === 'in-store' || paymentMode === 'pay-now'
+  const paymentIsCod = orderType === 'online' && isCodPaymentMethod(payment.method, settings)
 
-  useEffect(() => {
-    const hasDraft =
-      items.length > 0 ||
-      customer.name.trim() ||
-      customer.phone.trim() ||
-      customer.address.trim() ||
-      remark.trim()
-    if (!hasDraft) return undefined
-
-    const warn = (event) => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
-    window.addEventListener('beforeunload', warn)
-    return () => window.removeEventListener('beforeunload', warn)
-  }, [customer, items.length, remark])
-
-  const updateCustomer = (key, value) => {
-    setCustomer((current) => ({ ...current, [key]: value }))
+  const updateLineProduct = (productId) => {
+    const product = data.products.find((entry) => String(entry.id) === String(productId))
+    const variant = product?.variants?.[0]
+    setLineDraft((current) => ({
+      ...current,
+      productId,
+      variantId: variant?.id || '',
+      unitPrice: variant?.price ?? product?.price ?? '',
+    }))
   }
 
-  const updateLine = (key, value) => {
-    setLineDraft((current) => {
-      const next = { ...current, [key]: value }
-      if (['type', 'size', 'color'].includes(key)) next.unitPrice = ''
-      return next
-    })
+  const updateLineVariant = (variantId) => {
+    const variant = selectedProduct?.variants?.find((entry) => String(entry.id) === String(variantId))
+    setLineDraft((current) => ({
+      ...current,
+      variantId,
+      unitPrice: variant?.price ?? selectedProduct?.price ?? current.unitPrice,
+    }))
   }
 
   const addItem = () => {
     const quantity = Number(lineDraft.quantity || 0)
-    const unitPrice = Number(lineDraft.unitPrice || suggestedPrice || 0)
+    const unitPrice = Number(lineDraft.unitPrice || selectedVariant?.price || selectedProduct?.price || 0)
     const discount = Number(lineDraft.discount || 0)
-
-    if (!lineDraft.type || !lineDraft.color || quantity <= 0 || unitPrice < 0) {
-      notify('Choose a product, color, valid quantity, and price.', 'warning')
+    if (!selectedProduct || (selectedProduct.variants?.length && !selectedVariant) || quantity <= 0) {
+      notify('Choose a product, final variant, and valid quantity.', 'warning')
       return
     }
     if (!preorder && quantity > available) {
-      notify(`Only ${available} item(s) are currently available.`, 'warning')
+      notify(`Only ${available} item(s) are available.`, 'warning')
       return
     }
-
-    const mergeKey = getVariantKey(lineDraft.size, lineDraft.color, lineDraft.type)
-    const existing = items.find(
-      (item) =>
-        getVariantKey(item.size, item.color, item.type) === mergeKey &&
-        item.unitPrice === unitPrice &&
-        item.discount === discount &&
-        item.deductionType === lineDraft.deductionType,
-    )
-
-    if (existing) {
-      const mergedQuantity = existing.quantity + quantity
-      if (!preorder && mergedQuantity > available) {
-        notify(`Only ${available} item(s) are currently available.`, 'warning')
-        return
-      }
-      setItems((current) =>
-        current.map((item) =>
-          item.id === existing.id
-            ? {
-                ...item,
-                quantity: mergedQuantity,
-                lineTotal: lineTotal({ ...item, quantity: mergedQuantity }),
-              }
-            : item,
-        ),
-      )
-    } else {
-      const next = {
-        id: crypto.randomUUID(),
-        type: lineDraft.type,
-        size: lineDraft.size,
-        color: lineDraft.color,
-        quantity,
-        unitPrice,
-        unitCost: 0,
-        discount,
-        deductionType: lineDraft.deductionType,
-        allocations: [],
-      }
-      setItems((current) => [...current, { ...next, lineTotal: lineTotal(next) }])
+    const stock = representativeStock || {}
+    const next = {
+      id: crypto.randomUUID(),
+      productId: selectedProduct.id,
+      variantId: selectedVariant?.id,
+      type: selectedProduct.name,
+      size: selectedVariant?.optionPath?.[0]?.value || selectedVariant?.name || 'Default',
+      color: selectedVariant?.optionPath?.[1]?.value || '-',
+      variantName: selectedVariant ? variantDisplayName(selectedVariant) : 'Default',
+      optionPath: selectedVariant?.optionPath || [],
+      quantity,
+      unitPrice,
+      unitCost: Number(selectedVariant?.cost ?? selectedProduct.cost ?? stock.unitCost ?? 0),
+      discount,
+      deductionType: 'discount',
+      allocations: [],
     }
-
-    setLineDraft((current) => ({ ...initialLine(data), type: current.type, color: current.color }))
-  }
-
-  const removeItem = (id) => {
-    setItems((current) => current.filter((item) => item.id !== id))
+    setItems((current) => [...current, { ...next, lineTotal: lineTotal(next) }])
+    setLineDraft((current) => ({ ...initialLine(data), productId: current.productId, variantId: current.variantId }))
   }
 
   const submitOrder = async (event) => {
     event.preventDefault()
-    if (!customer.name.trim() || !customer.phone.trim()) {
-      notify('Customer name and phone are required.', 'warning')
+    if (requireAuth?.('create sale')) return
+    if (orderType === 'online' && (!customer.name.trim() || !customer.phone.trim())) {
+      notify('Customer name and phone are required for online orders.', 'warning')
       return
     }
     if (!items.length) {
-      notify('Add at least one item to the order.', 'warning')
+      notify('Add at least one item.', 'warning')
       return
     }
     if (date > getToday()) {
-      notify('Future dates cannot be used for orders.', 'warning')
+      notify('Future dates cannot be used.', 'warning')
       return
     }
 
     let preparedItems = items
     if (!preorder) {
-      const result = allocateFifo(data.stocks, data.orders, items)
-      if (!result.ok) {
-        const shortage = result.shortage
-        notify(
-          `${shortage.type} ${shortage.size}/${shortage.color} is short by ${shortage.missing}.`,
-          'error',
-        )
+      const allocation = allocateFifo(data.stocks, data.orders, items)
+      if (!allocation.ok) {
+        notify('There is not enough stock for one selected variant.', 'error')
         return
       }
       preparedItems = items.map((item) => {
-        const allocation = result.allocations.find((entry) => entry.itemId === item.id)
-        return {
-          ...item,
-          allocations: allocation.allocations,
-          unitCost: allocation.unitCost,
-        }
+        const lineAllocation = allocation.allocations.find((entry) => entry.itemId === item.id)
+        return { ...item, allocations: lineAllocation.allocations, unitCost: lineAllocation.unitCost }
       })
     }
 
-    const finalTotals = calculateOrderTotals(preparedItems, orderDiscount, deliveryFee)
-    if (paymentMode === 'pay-now') {
-      const paymentError = validatePaymentDetails(payment)
+    if (payNow) {
+      const paymentError = validatePaymentDetails({ ...payment, settings, isCod: paymentIsCod })
       if (paymentError) {
         notify(paymentError, 'warning')
         return
       }
     }
+
+    const finalTotals = calculateOrderTotals(preparedItems, orderDiscount, orderType === 'online' ? deliveryFee : 0)
     setSaving(true)
     try {
       await createOrderAtomic(
         user.uid,
         {
-          id: 'new',
-          customer,
+          orderType,
+          customer: orderType === 'online' ? customer : undefined,
           items: preparedItems,
           date,
           ...finalTotals,
           fulfillmentStatus: preorder ? 'preorder' : 'reserved',
           paymentStatus: 'unpaid',
-          source,
+          source: orderType === 'online' ? source : 'In-Store',
           remark,
         },
         data.stocks,
         data.orders,
-        paymentMode === 'pay-now' ? payment : null,
+        payNow ? { ...payment, settings, isCod: paymentIsCod } : null,
       )
-      notify(
-        paymentMode === 'pay-now'
-          ? 'Order and payment were recorded atomically.'
-          : 'Multi-item order created as unpaid.',
-      )
+      notify(orderType === 'in-store' ? 'In-store sale completed.' : 'Online order created.')
       navigate('sales')
     } catch (error) {
-      notify(error.message || 'Order could not be created.', 'error')
+      notify(error.message || 'Sale could not be created.', 'error')
     } finally {
       setSaving(false)
     }
@@ -275,370 +209,140 @@ export default function OrderPage({ navigate }) {
 
   return (
     <Box className="page-stack">
-      <PageHeader
-        title="Create order"
-        subtitle="Build one customer order with multiple products."
-        onBack={() => navigate('home')}
-      />
+      <PageHeader title="Create sale" subtitle="Create online orders or immediate in-store sales." onBack={() => navigate('home')} />
 
       <Box component="form" onSubmit={submitOrder} className="order-workspace">
         <Stack spacing={2}>
           <Paper variant="outlined" className="section-card">
-            <Typography variant="h6">Customer and order</Typography>
-            <Box className="form-grid" sx={{ mt: 2 }}>
-              <TextField
-                className="span-6"
-                label="Customer name"
-                value={customer.name}
-                onChange={(event) => updateCustomer('name', event.target.value)}
-                required
-              />
-              <TextField
-                className="span-6"
-                label="Phone"
-                value={customer.phone}
-                onChange={(event) => updateCustomer('phone', event.target.value)}
-                required
-              />
-              <TextField
-                className="span-4"
-                type="date"
-                label="Order date"
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-                slotProps={{ inputLabel: { shrink: true } }}
-              />
-              <TextField
-                className="span-4"
-                label="City"
-                value={customer.city}
-                onChange={(event) => updateCustomer('city', event.target.value)}
-              />
-              <FormControl className="span-4">
-                <InputLabel>Source</InputLabel>
-                <Select label="Source" value={source} onChange={(event) => setSource(event.target.value)}>
-                  {SOURCE_OPTIONS.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <TextField
-                className="span-12"
-                label="Address"
-                value={customer.address}
-                onChange={(event) => updateCustomer('address', event.target.value)}
-                multiline
-                minRows={2}
-              />
-            </Box>
+            <Typography variant="h6">Sale type</Typography>
+            <ToggleButtonGroup value={orderType} exclusive fullWidth onChange={(_, value) => value && setOrderType(value)} sx={{ mt: 2 }}>
+              <ToggleButton value="online">Online Order</ToggleButton>
+              <ToggleButton value="in-store">In-Store Sale</ToggleButton>
+            </ToggleButtonGroup>
           </Paper>
 
-          <Paper variant="outlined" className="section-card">
-            <Stack
-              direction="row"
-              sx={{ justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <Box>
-                <Typography variant="h6">Add products</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Add each size and color to the cart before saving.
-                </Typography>
-              </Box>
-              <FormControlLabel
-                control={
-                  <Checkbox checked={preorder} onChange={(event) => setPreorder(event.target.checked)} />
-                }
-                label="Preorder"
-              />
-            </Stack>
-
-            {preorder ? (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                Preorders do not reserve stock or count as recognized revenue.
-              </Alert>
-            ) : null}
-
-            <Box className="form-grid" sx={{ mt: 2 }}>
-              <FormControl className="span-3">
-                <InputLabel>Type</InputLabel>
-                <Select
-                  label="Type"
-                  value={lineDraft.type}
-                  onChange={(event) => updateLine('type', event.target.value)}
-                >
-                  {data.productTypes.map((type) => (
-                    <MenuItem key={type} value={type}>
-                      {type}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl className="span-3">
-                <InputLabel>Size</InputLabel>
-                <Select
-                  label="Size"
-                  value={lineDraft.size}
-                  onChange={(event) => updateLine('size', event.target.value)}
-                >
-                  {SIZE_OPTIONS.map((size) => (
-                    <MenuItem key={size} value={size}>
-                      {size}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl className="span-3">
-                <InputLabel>Color</InputLabel>
-                <Select
-                  label="Color"
-                  value={lineDraft.color}
-                  onChange={(event) => updateLine('color', event.target.value)}
-                >
-                  {data.productColors.map((color) => (
-                    <MenuItem key={color} value={color}>
-                      {color}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <TextField
-                className="span-3"
-                type="number"
-                label="Quantity"
-                value={lineDraft.quantity}
-                onChange={(event) => updateLine('quantity', event.target.value)}
-                slotProps={{ htmlInput: { min: 1 } }}
-              />
-              <TextField
-                className="span-4"
-                type="number"
-                label={`Unit price${suggestedPrice ? ` · suggested ${suggestedPrice}` : ''}`}
-                value={lineDraft.unitPrice}
-                onChange={(event) => updateLine('unitPrice', event.target.value)}
-                placeholder={String(suggestedPrice || 0)}
-                slotProps={{ htmlInput: { min: 0 } }}
-              />
-              <Stack className="span-4" direction="row" gap={1}>
-                <FormControl sx={{ width: 150, flexShrink: 0 }}>
-                  <InputLabel>Option</InputLabel>
-                  <Select
-                    label="Option"
-                    value={lineDraft.deductionType}
-                    onChange={(event) => updateLine('deductionType', event.target.value)}
-                  >
-                    <MenuItem value="discount">Line discount</MenuItem>
-                    <MenuItem value="advance-payment">Advance Payment</MenuItem>
+          {orderType === 'online' ? (
+            <Paper variant="outlined" className="section-card">
+              <Typography variant="h6">Customer and delivery</Typography>
+              <Box className="form-grid" sx={{ mt: 2 }}>
+                <TextField className="span-6" label="Customer name" value={customer.name} onChange={(event) => setCustomer((current) => ({ ...current, name: event.target.value }))} required />
+                <TextField className="span-6" label="Phone" value={customer.phone} onChange={(event) => setCustomer((current) => ({ ...current, phone: event.target.value }))} required />
+                <TextField className="span-4" type="date" label="Order date" value={date} onChange={(event) => setDate(event.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
+                <TextField className="span-4" label="City" value={customer.city} onChange={(event) => setCustomer((current) => ({ ...current, city: event.target.value }))} />
+                <FormControl className="span-4">
+                  <InputLabel>Source</InputLabel>
+                  <Select label="Source" value={source} onChange={(event) => setSource(event.target.value)}>
+                    {SOURCE_OPTIONS.map((option) => (
+                      <MenuItem key={option} value={option}>{option}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
-                <TextField
-                  type="number"
-                  label={deductionLabel(lineDraft.deductionType)}
-                  value={lineDraft.discount}
-                  onChange={(event) => updateLine('discount', event.target.value)}
-                  slotProps={{ htmlInput: { min: 0 } }}
-                  sx={{ minWidth: 0, flex: 1 }}
-                />
-              </Stack>
-              <Stack
-                className="span-4"
-                direction="row"
-                sx={{ alignItems: 'center', justifyContent: 'space-between' }}
-              >
-                <Typography color={available > 3 ? 'success.main' : 'warning.main'}>
-                  Available: {available}
-                </Typography>
-                <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={addItem}>
-                  Add item
-                </Button>
+                <TextField className="span-12" label="Address" value={customer.address} onChange={(event) => setCustomer((current) => ({ ...current, address: event.target.value }))} multiline minRows={2} />
+              </Box>
+            </Paper>
+          ) : (
+            <Paper variant="outlined" className="section-card">
+              <Typography variant="h6">In-store sale</Typography>
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Customer, delivery, deposit, and COD settlement details are not required for in-store sales.
+              </Alert>
+              <TextField sx={{ mt: 2 }} type="date" label="Sale date" value={date} onChange={(event) => setDate(event.target.value)} slotProps={{ inputLabel: { shrink: true } }} fullWidth />
+            </Paper>
+          )}
+
+          <Paper variant="outlined" className="section-card">
+            <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="h6">Add products</Typography>
+              {orderType === 'online' ? (
+                <FormControlLabel control={<Checkbox checked={preorder} onChange={(event) => setPreorder(event.target.checked)} />} label="Preorder" />
+              ) : null}
+            </Stack>
+            <Box className="form-grid" sx={{ mt: 2 }}>
+              <FormControl className="span-6">
+                <InputLabel>Product</InputLabel>
+                <Select label="Product" value={lineDraft.productId} onChange={(event) => updateLineProduct(event.target.value)}>
+                  {data.products.map((product) => <MenuItem key={product.id} value={product.id}>{product.name}</MenuItem>)}
+                </Select>
+              </FormControl>
+              <FormControl className="span-6" disabled={!selectedProduct?.variants?.length}>
+                <InputLabel>Variant</InputLabel>
+                <Select label="Variant" value={lineDraft.variantId} onChange={(event) => updateLineVariant(event.target.value)}>
+                  {(selectedProduct?.variants || []).filter((variant) => variant.isActive !== false).map((variant) => (
+                    <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField className="span-4" type="number" label="Quantity" value={lineDraft.quantity} onChange={(event) => setLineDraft((current) => ({ ...current, quantity: event.target.value }))} slotProps={{ htmlInput: { min: 1 } }} />
+              <TextField className="span-4" type="number" label="Unit price" value={lineDraft.unitPrice} onChange={(event) => setLineDraft((current) => ({ ...current, unitPrice: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
+              <TextField className="span-4" type="number" label="Advanced payment" value={lineDraft.discount} onChange={(event) => setLineDraft((current) => ({ ...current, discount: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
+              <Stack className="span-12" direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography color={available > 3 ? 'success.main' : 'warning.main'}>Available: {available}</Typography>
+                <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={addItem}>Add item</Button>
               </Stack>
             </Box>
           </Paper>
 
           <Paper variant="outlined" className="section-card">
-            <Typography variant="h6">Order items</Typography>
+            <Typography variant="h6">Items</Typography>
             <Stack spacing={1.25} sx={{ mt: 2 }}>
               {items.map((item) => (
                 <Box key={item.id} className="cart-line">
                   <Box>
                     <Typography fontWeight={800}>{item.type}</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {item.size} · {item.color} · {item.quantity} × {formatKs(item.unitPrice)}
+                      {item.variantName} - {item.quantity} x {formatKs(item.unitPrice)}
                     </Typography>
                   </Box>
                   <Stack direction="row" alignItems="center" gap={1}>
                     <Typography fontWeight={800}>{formatKs(item.lineTotal)}</Typography>
-                    <IconButton
-                      aria-label={`Remove ${item.type}`}
-                      color="error"
-                      onClick={() => removeItem(item.id)}
-                    >
+                    <IconButton color="error" onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}>
                       <DeleteOutlineRoundedIcon />
                     </IconButton>
                   </Stack>
                 </Box>
               ))}
-              {!items.length ? (
-                <Box className="empty-state">
-                  <Typography fontWeight={700}>Your order is empty</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Select a product above and choose “Add item”.
-                  </Typography>
-                </Box>
-              ) : null}
+              {!items.length ? <Typography color="text.secondary">No items added yet.</Typography> : null}
             </Stack>
           </Paper>
         </Stack>
 
         <Paper variant="outlined" className="order-summary-card">
-          <Typography variant="h6">Order summary</Typography>
+          <Typography variant="h6">Summary</Typography>
           <Stack spacing={1.5} sx={{ mt: 2 }}>
-            <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
-              <Typography color="text.secondary">Items</Typography>
-              <Typography>{items.reduce((sum, item) => sum + item.quantity, 0)}</Typography>
-            </Stack>
-            <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
-              <Typography color="text.secondary">Subtotal</Typography>
-              <Typography>{formatKs(totals.subtotal)}</Typography>
-            </Stack>
-            <TextField
-              type="number"
-              label="Order discount"
-              value={orderDiscount}
-              onChange={(event) => setOrderDiscount(event.target.value)}
-              slotProps={{ htmlInput: { min: 0 } }}
-            />
-            <TextField
-              type="number"
-              label="Delivery fee"
-              value={deliveryFee}
-              onChange={(event) => setDeliveryFee(event.target.value)}
-              slotProps={{ htmlInput: { min: 0 } }}
-            />
-            <TextField
-              label="Remark"
-              value={remark}
-              onChange={(event) => setRemark(event.target.value)}
-              multiline
-              minRows={2}
-            />
-            <Divider />
-            <Box>
-              <Typography fontWeight={800} sx={{ mb: 1 }}>
-                Payment
-              </Typography>
-              <ToggleButtonGroup
-                value={paymentMode}
-                exclusive
-                fullWidth
-                onChange={(_, value) => value && setPaymentMode(value)}
-              >
+            <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography>Subtotal</Typography><Typography>{formatKs(totals.subtotal)}</Typography></Stack>
+            <TextField type="number" label="Order discount" value={orderDiscount} onChange={(event) => setOrderDiscount(event.target.value)} slotProps={{ htmlInput: { min: 0 } }} />
+            {orderType === 'online' ? (
+              <TextField type="number" label="Delivery fee" value={deliveryFee} onChange={(event) => setDeliveryFee(event.target.value)} slotProps={{ htmlInput: { min: 0 } }} />
+            ) : null}
+            <TextField label={orderType === 'in-store' ? 'Note (optional)' : 'Remark'} value={remark} onChange={(event) => setRemark(event.target.value)} multiline minRows={2} />
+            {orderType === 'online' ? (
+              <ToggleButtonGroup value={paymentMode} exclusive fullWidth onChange={(_, value) => value && setPaymentMode(value)}>
                 <ToggleButton value="unpaid">Unpaid</ToggleButton>
                 <ToggleButton value="pay-now">Pay now</ToggleButton>
               </ToggleButtonGroup>
-            </Box>
-            {paymentMode === 'pay-now' ? (
+            ) : null}
+            {payNow ? (
               <Stack spacing={1.5}>
-                {preorder ? (
-                  <Alert severity="warning">
-                    Payment is recorded now, but preorder revenue remains unrecognized until
-                    fulfillment.
-                  </Alert>
-                ) : null}
                 <FormControl>
                   <InputLabel>Payment method</InputLabel>
-                  <Select
-                    label="Payment method"
-                    value={payment.method}
-                    onChange={(event) =>
-                      setPayment((current) => ({
-                        ...current,
-                        method: event.target.value,
-                        billNumber: '',
-                        transactionId: '',
-                      }))
-                    }
-                  >
-                    {PAYMENT_METHODS.map((method) => (
-                      <MenuItem key={method} value={method}>
-                        {method}
-                      </MenuItem>
-                    ))}
+                  <Select label="Payment method" value={payment.method} onChange={(event) => setPayment((current) => ({ ...current, method: event.target.value, billNumber: '', transactionId: '' }))}>
+                    {paymentMethods.map((method) => <MenuItem key={method.id} value={method.name}>{method.name}</MenuItem>)}
                   </Select>
                 </FormControl>
-                {payment.method === 'COD' ? (
-                  <TextField
-                    label="COD reference — last 6 digits"
-                    value={payment.billNumber}
-                    onChange={(event) =>
-                      setPayment((current) => ({
-                        ...current,
-                        billNumber: digitsOnly(event.target.value),
-                      }))
-                    }
-                    slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
-                    required
-                  />
+                {paymentIsCod ? (
+                  <TextField label="COD reference - last 6 digits" value={payment.billNumber} onChange={(event) => setPayment((current) => ({ ...current, billNumber: digitsOnly(event.target.value) }))} slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }} />
                 ) : null}
-                <TextField
-                  label="Transaction ID — last 6 digits"
-                  value={payment.transactionId}
-                  onChange={(event) =>
-                    setPayment((current) => ({
-                      ...current,
-                      transactionId: digitsOnly(event.target.value),
-                    }))
-                  }
-                  slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
-                  required
-                />
-                <TextField
-                  type="date"
-                  label="Payment date"
-                  value={payment.date}
-                  onChange={(event) =>
-                    setPayment((current) => ({ ...current, date: event.target.value }))
-                  }
-                  slotProps={{ inputLabel: { shrink: true } }}
-                  required
-                />
-                <TextField
-                  label="Payment note (optional)"
-                  value={payment.note}
-                  onChange={(event) =>
-                    setPayment((current) => ({ ...current, note: event.target.value }))
-                  }
-                  multiline
-                  minRows={2}
-                />
+                <TextField label="Transaction ID - last 6 digits" value={payment.transactionId} onChange={(event) => setPayment((current) => ({ ...current, transactionId: digitsOnly(event.target.value) }))} slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }} />
+                <TextField type="date" label="Payment date" value={payment.date} onChange={(event) => setPayment((current) => ({ ...current, date: event.target.value }))} slotProps={{ inputLabel: { shrink: true } }} />
               </Stack>
-            ) : (
-              <Alert severity="info">This order will appear in Finance under Outstanding.</Alert>
-            )}
+            ) : <Alert severity="info">This order will appear in Finance as outstanding.</Alert>}
             <Divider />
-            <Stack
-              direction="row"
-              sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}
-            >
-              <Typography fontWeight={800}>Total</Typography>
-              <Typography variant="h5" color="primary.main" fontWeight={900}>
-                {formatKs(totals.total)}
-              </Typography>
+            <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <Typography fontWeight={900}>Total</Typography>
+              <Typography variant="h5" color="primary.main" fontWeight={900}>{formatKs(totals.total)}</Typography>
             </Stack>
-            <Button
-              type="submit"
-              variant="contained"
-              color="success"
-              size="large"
-              startIcon={<SaveRoundedIcon />}
-              disabled={saving || !items.length}
-            >
-              {saving
-                ? 'Saving order…'
-                : paymentMode === 'pay-now'
-                  ? `Create & receive ${formatKs(totals.total)}`
-                  : 'Create unpaid order'}
+            <Button type="submit" variant="contained" color="success" size="large" startIcon={<SaveRoundedIcon />} disabled={saving || !items.length}>
+              {saving ? 'Saving...' : orderType === 'in-store' ? `Complete sale ${formatKs(totals.total)}` : 'Create order'}
             </Button>
           </Stack>
         </Paper>

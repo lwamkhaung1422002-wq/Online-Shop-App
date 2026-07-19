@@ -61,7 +61,7 @@ describe('payment references', () => {
     ).toContain('Transaction ID')
     expect(
       validatePaymentDetails({
-        method: 'KBZ Pay 1',
+        method: 'Cash',
         billNumber: '',
         transactionId: '12345',
         date: '2026-06-23',
@@ -70,8 +70,8 @@ describe('payment references', () => {
   })
 
   it('scopes identical references to the selected payment method', () => {
-    expect(paymentReferenceKey({ method: 'KBZ Pay 1', transactionId: '123456' })).not.toBe(
-      paymentReferenceKey({ method: 'KBZ Pay 2', transactionId: '123456' }),
+    expect(paymentReferenceKey({ method: 'Cash', transactionId: '123456' })).not.toBe(
+      paymentReferenceKey({ method: 'Bank Transfer', transactionId: '123456' }),
     )
   })
 
@@ -143,14 +143,14 @@ describe('finance reconciliation', () => {
           id: 'pay-1',
           orderId: 'paid',
           type: 'payment',
-          method: 'KBZ Pay 1',
+          method: 'Cash',
           transactionId: '123456',
         },
         {
           id: 'orphan',
           orderId: 'missing',
           type: 'payment',
-          method: 'KBZ Pay 1',
+          method: 'Cash',
           transactionId: '123456',
         },
       ],
@@ -234,7 +234,7 @@ describe('COD settlements', () => {
     const other = { ...order('o3', 'unpaid'), customer: { name: 'C', phone: '09999', city: '', address: '' } }
     const state = buildPaymentReconciliation({
       orders: [unpaid, paid, other],
-      payments: [{ id: 'p2', orderId: 'o2', method: 'KBZ Pay 1', transactionId: '123456' }],
+      payments: [{ id: 'p2', orderId: 'o2', method: 'Cash', transactionId: '123456' }],
     })
     const result = filterFinanceOrders(state, '09123', 'phone', 'received')
 

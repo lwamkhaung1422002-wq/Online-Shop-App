@@ -52,6 +52,7 @@ model ShopSetting {
   option2ValuesLabel  String   @default("Option 2 Values")
   option1Values       String   @default("[\"Standard\"]")
   option2Values       String   @default("[\"General\"]")
+  paymentMethods      String   @default("[{\"id\":\"cod\",\"name\":\"COD\",\"type\":\"cod\",\"active\":true,\"sortOrder\":0},{\"id\":\"cash\",\"name\":\"Cash\",\"type\":\"normal\",\"active\":true,\"sortOrder\":1},{\"id\":\"kbz-pay\",\"name\":\"KBZ Pay\",\"type\":\"normal\",\"active\":true,\"sortOrder\":2}]")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   shop                Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)

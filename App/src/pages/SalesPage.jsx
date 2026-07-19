@@ -91,7 +91,7 @@ function ItemsSummary({ order }) {
   )
 }
 
-export default function SalesPage({ navigate }) {
+export default function SalesPage({ navigate, requireAuth }) {
   const mobile = useMediaQuery('(max-width:767px)')
   const { user } = useAuth()
   const { data } = useData()
@@ -163,6 +163,7 @@ export default function SalesPage({ navigate }) {
   )
 
   const run = async (order, operation, successMessage) => {
+    if (requireAuth?.('update order')) return
     setWorkingId(order.id)
     try {
       await operation()
@@ -194,6 +195,7 @@ export default function SalesPage({ navigate }) {
     )
 
   const confirmCancel = async () => {
+    if (requireAuth?.('cancel order')) return
     const order = cancelTarget
     if (!order) return
     await run(
@@ -205,6 +207,7 @@ export default function SalesPage({ navigate }) {
   }
 
   const confirmDelete = async () => {
+    if (requireAuth?.('delete order')) return
     const order = deleteTarget
     if (!order) return
     await run(

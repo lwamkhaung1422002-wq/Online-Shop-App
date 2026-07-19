@@ -42,12 +42,12 @@ import {
   voidCodSettlementAtomic,
 } from '../services/shopApiService.js'
 import {
-  PAYMENT_METHODS,
   buildFinanceState,
   formatKs,
   getReceivedByMethod,
   getToday,
 } from '../utils/storage.js'
+import { activePaymentMethods, isCodPaymentMethod } from '../utils/catalog.js'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
 import useSessionState from '../hooks/useSessionState.js'
 import {
@@ -66,12 +66,14 @@ const searchTypes = [
   { value: 'method', label: 'Payment Method' },
 ]
 
-export default function FinancePage({ refresh }) {
+export default function FinancePage({ refresh, requireAuth }) {
   const mobile = useMediaQuery('(max-width:767px)')
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
   const state = useMemo(() => buildFinanceState(data), [data])
+  const paymentMethods = activePaymentMethods(data.catalogSettings)
+  const defaultCodMethod = paymentMethods.find((method) => method.type === 'cod')?.name || paymentMethods[0]?.name || 'COD'
   const [searchView, setSearchView] = useSessionState('finance:search', {
     type: 'all',
     value: '',
@@ -95,7 +97,7 @@ export default function FinancePage({ refresh }) {
     : 'all'
   const [working, setWorking] = useState(false)
   const [receiveDraft, setReceiveDraft] = useState({
-    method: 'COD',
+    method: defaultCodMethod,
     billNumber: '',
     transactionId: '',
     amount: '',
@@ -118,13 +120,14 @@ export default function FinancePage({ refresh }) {
 
   const methodBalance = getReceivedByMethod(state.payments, state.orderById)
   const totalBalance = Object.values(methodBalance).reduce((sum, value) => sum + value, 0)
+  const receiveIsCod = isCodPaymentMethod(receiveDraft.method, data.catalogSettings)
 
   const openReceive = (order) => {
     setReceiveOrder(order)
     setSelectedCodOrderIds([order.id])
     setCodOrderSearch(order.customer.phone || '')
     setReceiveDraft({
-      method: 'COD',
+      method: defaultCodMethod,
       billNumber: '',
       transactionId: '',
       amount: order.total,
@@ -134,7 +137,9 @@ export default function FinancePage({ refresh }) {
   }
 
   const confirmReceive = async () => {
-    const validationError = validatePaymentDetails(receiveDraft)
+    if (requireAuth?.('receive payment')) return
+    const receiveIsCod = isCodPaymentMethod(receiveDraft.method, data.catalogSettings)
+    const validationError = validatePaymentDetails({ ...receiveDraft, settings: data.catalogSettings, isCod: receiveIsCod })
     if (validationError) {
       notify(validationError, 'warning')
       return
@@ -143,14 +148,14 @@ export default function FinancePage({ refresh }) {
     const selectedOrders = state.outstandingOrders.filter((order) =>
       selectedCodOrderIds.includes(order.id),
     )
-    if (receiveDraft.method === 'COD') {
+    if (receiveIsCod) {
       const allocations = selectedOrders.map((order) => ({
         orderId: order.id,
         customerName: order.customer.name,
         phone: order.customer.phone,
         amount: order.total,
       }))
-      const settlementError = validateCodSettlement(allocations, receiveDraft)
+      const settlementError = validateCodSettlement(allocations, { ...receiveDraft, settings: data.catalogSettings, isCod: true })
       if (settlementError) {
         notify(settlementError, 'warning')
         return
@@ -162,7 +167,7 @@ export default function FinancePage({ refresh }) {
 
     setWorking(true)
     try {
-      if (receiveDraft.method === 'COD') {
+      if (receiveIsCod) {
         await receiveCodSettlementAtomic(
           user.uid,
           selectedOrders.map((order) => ({
@@ -207,6 +212,7 @@ export default function FinancePage({ refresh }) {
   }
 
   const confirmVoid = async () => {
+    if (requireAuth?.('void COD settlement')) return
     setWorking(true)
     try {
       await voidCodSettlementAtomic(user.uid, voidPayment, voidReason)
@@ -221,6 +227,7 @@ export default function FinancePage({ refresh }) {
   }
 
   const confirmRefund = async () => {
+    if (requireAuth?.('refund payment')) return
     if (!/^\d{6}$/.test(refundDraft.transactionId) || !refundDraft.date || !refundDraft.reason) {
       notify('A 6-digit refund transaction ID, date, and reason are required.', 'warning')
       return
@@ -260,7 +267,7 @@ export default function FinancePage({ refresh }) {
   const paymentReferenceText = (order) => {
     const payment = state.paymentById[order.paymentId]
     if (!payment) return ''
-    return payment.method === 'COD'
+    return isCodPaymentMethod(payment.method, data.catalogSettings)
       ? `COD ${payment.billNumber || '—'} · TX ${payment.transactionId || '—'}`
       : `${payment.method || 'Payment'} · ${payment.transactionId || '—'}`
   }
@@ -402,7 +409,7 @@ export default function FinancePage({ refresh }) {
                 Details
               </Button>
               {order.paymentStatus === 'paid' &&
-              state.paymentById[order.paymentId]?.method !== 'COD' ? (
+              !isCodPaymentMethod(state.paymentById[order.paymentId]?.method, data.catalogSettings) ? (
                 <Button
                   variant="contained"
                   color="error"
@@ -488,7 +495,7 @@ export default function FinancePage({ refresh }) {
                       Details
                     </Button>
                     {order.paymentStatus === 'paid' &&
-                    state.paymentById[order.paymentId]?.method !== 'COD' ? (
+                    !isCodPaymentMethod(state.paymentById[order.paymentId]?.method, data.catalogSettings) ? (
                       <Button size="small" variant="contained" color="error" startIcon={<ReplayOutlinedIcon />} onClick={() => openRefund(order)}>
                         Refund
                       </Button>
@@ -536,7 +543,7 @@ export default function FinancePage({ refresh }) {
 
       <Dialog open={Boolean(receiveOrder)} onClose={() => setReceiveOrder(null)} fullWidth maxWidth="md">
         <DialogTitle>
-          {receiveDraft.method === 'COD' ? 'Receive COD Settlement' : 'Receive Payment'}
+          {receiveIsCod ? 'Receive COD Settlement' : 'Receive Payment'}
         </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 1 }}>
@@ -552,20 +559,20 @@ export default function FinancePage({ refresh }) {
                     billNumber: '',
                     transactionId: '',
                     amount:
-                      event.target.value === 'COD'
+                      isCodPaymentMethod(event.target.value, data.catalogSettings)
                         ? selectedCodTotal
                         : receiveOrder?.total || '',
                   }))
                 }
               >
-                {PAYMENT_METHODS.map((method) => (
-                  <MenuItem key={method} value={method}>
-                    {method}
+                {paymentMethods.map((method) => (
+                  <MenuItem key={method.id} value={method.name}>
+                    {method.name}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
-            {receiveDraft.method === 'COD' ? (
+            {receiveIsCod ? (
               <>
                 <Alert severity="info">
                   Search by phone, customer, or order ID. One COD settlement may contain one or
@@ -632,7 +639,7 @@ export default function FinancePage({ refresh }) {
                 />
               </>
             ) : null}
-            {receiveDraft.method === 'COD' ? (
+            {receiveIsCod ? (
               <TextField
                 label="COD reference — last 6 digits"
                 value={receiveDraft.billNumber}
@@ -667,7 +674,7 @@ export default function FinancePage({ refresh }) {
           <Button variant="contained" color="success" onClick={confirmReceive} disabled={working}>
             {working
               ? 'Receiving…'
-              : receiveDraft.method === 'COD'
+              : receiveIsCod
                 ? `Receive ${selectedCodOrders.length} order(s)`
                 : `Receive ${formatKs(receiveOrder?.total)}`}
           </Button>

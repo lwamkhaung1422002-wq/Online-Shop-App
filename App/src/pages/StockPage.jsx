@@ -22,7 +22,6 @@ import {
   TableRow,
   TextField,
   Typography,
-  useMediaQuery,
 } from '@mui/material'
 import AddRoundedIcon from '@mui/icons-material/AddRounded'
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
@@ -33,181 +32,125 @@ import MetricCard from '../components/MetricCard.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
-import {
-  adjustStockBatch,
-  createStockBatch,
-  deleteStockBatch,
-  saveCatalogItems,
-} from '../services/shopApiService.js'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
-import {
-  SIZE_OPTIONS,
-  buildStockState,
-  formatKs,
-  getToday,
-  getVariantKey,
-} from '../utils/storage.js'
-import { normalizeOrders } from '../domain/orders.js'
+import { adjustStockBatch, createStockBatch, deleteStockBatch } from '../services/shopApiService.js'
+import { buildStockState, formatKs, getStockVariantKey, getToday } from '../utils/storage.js'
+import { variantDisplayName } from '../utils/catalog.js'
 import useSessionState from '../hooks/useSessionState.js'
 
 const emptyStockForm = {
   date: getToday(),
-  deli: 0,
-  size: 'Size 1',
-  color: '',
-  type: '',
+  productId: '',
+  variantId: '',
   unitCost: '',
   salePrice: '',
   quantity: 1,
+  deli: 0,
 }
 
-function getSold(state, size, color, type, from = null, to = null) {
-  const list = state.soldQtyMap[getVariantKey(size, color, type)] || []
-  return list.reduce((sum, item) => {
-    if (from && item.date < from) return sum
-    if (to && item.date > to) return sum
-    return sum + item.qty
-  }, 0)
+function rowText(row) {
+  return [
+    row.date,
+    row.productName,
+    row.variantName,
+    row.optionPath?.map((entry) => `${entry.label} ${entry.value}`).join(' '),
+    row.note,
+    row.unitCost,
+    row.salePrice,
+    row.quantity,
+    row.available,
+  ]
+    .join(' ')
+    .toLowerCase()
 }
 
-function getAdjustmentQty(state, action, size, color, type, from = null, to = null) {
-  const list = state.adjustmentMap[getVariantKey(size, color, type)] || []
-  return list.reduce((sum, item) => {
-    if (item.stockBatchId) return sum
-    if (item.action !== action) return sum
-    if (from && item.date < from) return sum
-    if (to && item.date > to) return sum
-    return sum + Number(item.qty || 0)
-  }, 0)
-}
-
-function buildRows(state, filters) {
+function buildRows(state, search) {
   const grouped = {}
-  const from = filters.from || null
-  const to = filters.to || null
 
   state.stocks.forEach((stock) => {
-    if (from && stock.date < from) return
-    if (to && stock.date > to) return
-    if (filters.size && stock.size !== filters.size) return
-    if (filters.color && stock.color !== filters.color) return
-    if (filters.type && stock.type !== filters.type) return
-
-    const unitCost = Number(stock.unitCost ?? stock.cost ?? stock.price ?? 0)
-    const salePrice = Number(stock.salePrice ?? stock.price ?? 0)
-    const key = `${stock.date || '-'}__${stock.size}__${stock.color}__${stock.type || '-'}__${unitCost}__${salePrice}`
-
+    const key = `${stock.date || '-'}__${getStockVariantKey(stock)}__${stock.unitCost}__${stock.salePrice}`
     if (!grouped[key]) {
       grouped[key] = {
         date: stock.date || '-',
-        size: stock.size,
-        color: stock.color,
-        type: stock.type || '-',
-        unitCost,
-        salePrice,
+        productId: stock.productId,
+        variantId: stock.variantId,
+        productName: stock.type || '-',
+        variantName: stock.variantName || [stock.size, stock.color].filter(Boolean).join(' / ') || 'Default',
+        optionPath: stock.optionPath || [],
+        note: stock.note || '',
+        unitCost: Number(stock.unitCost || 0),
+        salePrice: Number(stock.salePrice || stock.price || 0),
         quantity: 0,
+        reservedQuantity: 0,
         deli: 0,
         ids: [],
-        reservedQuantity: 0,
       }
     }
-
     grouped[key].quantity += Number(stock.quantity || 0)
+    grouped[key].reservedQuantity += Number(stock.reservedQuantity || 0)
     grouped[key].deli += Number(stock.deli || 0)
     grouped[key].ids.push(String(stock.id))
-    grouped[key].reservedQuantity += Number(stock.reservedQuantity || 0)
   })
 
-  const groupedRows = Object.values(grouped)
-  const itemBuckets = {}
-
-  groupedRows.forEach((row) => {
-    const itemKey = getVariantKey(row.size, row.color, row.type)
-    if (!itemBuckets[itemKey]) itemBuckets[itemKey] = []
-    itemBuckets[itemKey].push(row)
-  })
-
-  const rows = []
-
-  Object.values(itemBuckets).forEach((bucket) => {
-    bucket.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-
-    const base = bucket[0]
-    let remainingSold = getSold(state, base.size, base.color, base.type, from, to)
-    let remainingAdj =
-      getAdjustmentQty(state, 'ADD', base.size, base.color, base.type, from, to) -
-      getAdjustmentQty(state, 'SUB', base.size, base.color, base.type, from, to)
-
-    bucket.forEach((row) => {
-      let adjustedQty = Number(row.quantity || 0)
-
-      if (remainingAdj > 0) {
-        adjustedQty += remainingAdj
-        remainingAdj = 0
-      } else if (remainingAdj < 0) {
-        const reducible = Math.min(adjustedQty, Math.abs(remainingAdj))
-        adjustedQty -= reducible
-        remainingAdj += reducible
+  const rows = Object.values(grouped)
+    .map((row) => {
+      const sold = (state.soldQtyMap[getStockVariantKey(row)] || []).reduce(
+        (sum, item) => sum + Number(item.qty || 0),
+        0,
+      )
+      const adjustments = state.adjustmentMap[getStockVariantKey(row)] || []
+      const adjusted = adjustments.reduce(
+        (sum, item) => sum + (item.action === 'SUB' ? -1 : 1) * Number(item.qty || item.quantity || 0),
+        0,
+      )
+      const adjustedQty = Math.max(0, Number(row.quantity || 0) + adjusted)
+      return {
+        ...row,
+        adjustedQty,
+        sold,
+        available: Math.max(0, adjustedQty - sold),
       }
-
-      adjustedQty = Math.max(0, adjustedQty)
-
-      const sold = Math.min(adjustedQty, Math.max(0, remainingSold))
-      remainingSold -= sold
-
-      const available = Math.max(0, adjustedQty - sold)
-      rows.push({ ...row, sold, adjustedQty, available })
     })
-  })
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
 
-  rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-
-  const totals = rows.reduce(
+  const term = String(search || '').trim().toLowerCase()
+  const filteredRows = term ? rows.filter((row) => rowText(row).includes(term)) : rows
+  const totals = filteredRows.reduce(
     (acc, row) => {
       acc.totalAvailable += row.available
       acc.totalQuantity += row.adjustedQty
+      acc.totalSold += row.sold
       acc.totalValue += row.adjustedQty * row.unitCost
       acc.totalAvailableValue += row.available * row.unitCost
-      acc.totalSold += row.sold
       acc.totalDeliveryCost += row.deli
       return acc
     },
     {
       totalAvailable: 0,
       totalQuantity: 0,
+      totalSold: 0,
       totalValue: 0,
       totalAvailableValue: 0,
-      totalSold: 0,
       totalDeliveryCost: 0,
     },
   )
 
-  return { rows, totals }
+  return { rows: filteredRows, totals }
 }
 
-function getStockTone(available) {
-  if (available <= 0) return 'error'
-  if (available <= 3) return 'warning'
+function stockTone(value) {
+  if (value <= 0) return 'error'
+  if (value <= 3) return 'warning'
   return 'success'
 }
 
-export default function StockPage({ refresh }) {
+export default function StockPage({ refresh, requireAuth, navigate }) {
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
   const state = useMemo(() => buildStockState(data), [data])
-  const mobile = useMediaQuery('(max-width:767px)')
-  const [newType, setNewType] = useState('')
-  const [newColor, setNewColor] = useState('')
-  const [filters, setFilters] = useSessionState('stock:filters', {
-    type: '',
-    size: '',
-    color: '',
-    from: '',
-    to: '',
-  })
+  const [search, setSearch] = useSessionState('stock:main-search', '')
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [stockForm, setStockForm] = useState(emptyStockForm)
   const [confirmAction, setConfirmAction] = useState(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
@@ -215,148 +158,91 @@ export default function StockPage({ refresh }) {
   const [adjustDraft, setAdjustDraft] = useState({
     action: 'ADD',
     quantity: 1,
-    date: getToday(),
     reason: '',
   })
 
-  const { rows, totals } = useMemo(() => buildRows(state, filters), [state, filters])
-  const catalogUsage = useMemo(() => {
-    const types = {}
-    const colors = {}
-    state.stocks.forEach((stock) => {
-      types[stock.type || '-'] = (types[stock.type || '-'] || 0) + 1
-      colors[stock.color] = (colors[stock.color] || 0) + 1
-    })
-    normalizeOrders(data.orders).forEach((order) =>
-      order.items.forEach((item) => {
-        types[item.type] = (types[item.type] || 0) + 1
-        colors[item.color] = (colors[item.color] || 0) + 1
-      }),
-    )
-    return { types, colors }
-  }, [data.orders, state.stocks])
-
-  const handleExportStockPDF = async () => {
-    const { exportStockPDF } = await import('../utils/reports.js')
-    exportStockPDF(rows, totals)
-  }
-
-  const updateFilter = (key, value) => {
-    setFilters((current) => ({ ...current, [key]: value }))
-  }
+  const { rows, totals } = useMemo(() => buildRows(state, search), [search, state])
+  const selectedProduct = data.products.find((product) => String(product.id) === String(stockForm.productId))
+  const selectedVariant = selectedProduct?.variants?.find((variant) => String(variant.id) === String(stockForm.variantId))
 
   const openStockDialog = () => {
+    if (requireAuth?.('add stock')) return
+    const firstProduct = data.products[0]
+    const firstVariant = firstProduct?.variants?.[0]
     setStockForm({
       ...emptyStockForm,
-      color: state.productColors[0] || '',
-      type: state.productTypes[0] || '',
+      productId: firstProduct?.id || '',
+      variantId: firstVariant?.id || '',
+      unitCost: firstVariant?.cost ?? firstProduct?.cost ?? '',
+      salePrice: firstVariant?.price ?? firstProduct?.price ?? '',
     })
     setStockDialogOpen(true)
   }
 
-  const addType = async () => {
-    const value = newType.trim()
-    if (!value) return
-
-    if (state.productTypes.includes(value)) {
-      notify('This product type already exists.', 'warning')
-      return
-    }
-
-    await saveCatalogItems(user.uid, 'productTypes', [...state.productTypes, value])
-    setNewType('')
-    refresh()
+  const updateProduct = (productId) => {
+    const product = data.products.find((entry) => String(entry.id) === String(productId))
+    const variant = product?.variants?.[0]
+    setStockForm((current) => ({
+      ...current,
+      productId,
+      variantId: variant?.id || '',
+      unitCost: variant?.cost ?? product?.cost ?? current.unitCost,
+      salePrice: variant?.price ?? product?.price ?? current.salePrice,
+    }))
   }
 
-  const addColor = async () => {
-    const value = newColor.trim()
-    if (!value) return
-
-    if (state.productColors.includes(value)) {
-      notify('This color already exists.', 'warning')
-      return
-    }
-
-    await saveCatalogItems(user.uid, 'productColors', [...state.productColors, value])
-    setNewColor('')
-    refresh()
-  }
-
-  const deleteType = async (type) => {
-    if (catalogUsage.types[type]) {
-      notify('This type is already used and cannot be deleted.', 'warning')
-      return
-    }
-    setConfirmAction({
-      title: 'Delete product type?',
-      message: `Delete “${type}” from the catalog?`,
-      run: async () => {
-        await saveCatalogItems(
-          user.uid,
-          'productTypes',
-          state.productTypes.filter((item) => item !== type),
-        )
-        notify('Product type deleted.')
-        refresh()
-      },
-    })
-  }
-
-  const deleteColor = async (color) => {
-    if (catalogUsage.colors[color]) {
-      notify('This color is already used and cannot be deleted.', 'warning')
-      return
-    }
-    setConfirmAction({
-      title: 'Delete product color?',
-      message: `Delete “${color}” from the catalog?`,
-      run: async () => {
-        await saveCatalogItems(
-          user.uid,
-          'productColors',
-          state.productColors.filter((item) => item !== color),
-        )
-        notify('Product color deleted.')
-        refresh()
-      },
-    })
+  const updateVariant = (variantId) => {
+    const variant = selectedProduct?.variants?.find((entry) => String(entry.id) === String(variantId))
+    setStockForm((current) => ({
+      ...current,
+      variantId,
+      unitCost: variant?.cost ?? selectedProduct?.cost ?? current.unitCost,
+      salePrice: variant?.price ?? selectedProduct?.price ?? current.salePrice,
+    }))
   }
 
   const saveStock = async () => {
-    if (!stockForm.date || stockForm.unitCost === '' || stockForm.salePrice === '' || !stockForm.quantity) {
-      notify('Date, cost, sale price, and quantity are required.', 'warning')
+    if (requireAuth?.('save stock')) return
+    if (!stockForm.productId || !stockForm.date || Number(stockForm.quantity || 0) <= 0) {
+      notify('Product, date, and quantity are required.', 'warning')
+      return
+    }
+    if (selectedProduct?.variants?.length && !stockForm.variantId) {
+      notify('Select the final variant before saving stock.', 'warning')
       return
     }
 
     try {
       await createStockBatch(user.uid, {
+        productId: stockForm.productId,
+        variantId: stockForm.variantId || undefined,
+        type: selectedProduct?.name,
+        size: selectedVariant?.optionPath?.[0]?.value || selectedVariant?.name || 'Default',
+        color: selectedVariant?.optionPath?.[1]?.value || '-',
         date: stockForm.date,
-        deli: Number(stockForm.deli || 0),
-        size: stockForm.size,
-        color: stockForm.color,
-        type: stockForm.type || '-',
-        unitCost: Number(stockForm.unitCost || 0),
-        salePrice: Number(stockForm.salePrice || 0),
-        price: Number(stockForm.salePrice || 0),
+        unitCost: Number(stockForm.unitCost || selectedVariant?.cost || selectedProduct?.cost || 0),
+        salePrice: Number(stockForm.salePrice || selectedVariant?.price || selectedProduct?.price || 0),
+        price: Number(stockForm.salePrice || selectedVariant?.price || selectedProduct?.price || 0),
         quantity: Number(stockForm.quantity || 0),
+        deli: Number(stockForm.deli || 0),
       })
-      setStockDialogOpen(false)
       notify('Stock batch added.')
+      setStockDialogOpen(false)
       refresh()
     } catch (error) {
       notify(error.message || 'Stock could not be added.', 'error')
     }
   }
 
-  const deleteStock = async (row) => {
+  const deleteStock = (row) => {
+    if (requireAuth?.('delete stock')) return
     setConfirmAction({
       title: 'Delete stock batch?',
-      message:
-        'Only unused stock can be deleted. Reserved stock will be protected automatically.',
+      message: 'Only unused stock can be deleted. Reserved stock is protected by the API.',
       run: async () => {
         const targets = state.stocks.filter((stock) => row.ids.includes(String(stock.id)))
         for (const stock of targets) await deleteStockBatch(user.uid, stock)
-        notify('Unused stock batch deleted.')
+        notify('Stock batch deleted.')
         refresh()
       },
     })
@@ -376,6 +262,7 @@ export default function StockPage({ refresh }) {
   }
 
   const saveAdjustment = async () => {
+    if (requireAuth?.('adjust stock')) return
     if (!adjustDraft.reason.trim() || Number(adjustDraft.quantity || 0) <= 0) {
       notify('Adjustment quantity and reason are required.', 'warning')
       return
@@ -383,8 +270,8 @@ export default function StockPage({ refresh }) {
     setConfirmBusy(true)
     try {
       await adjustStockBatch(user.uid, adjustTarget.ids[0], adjustDraft)
+      notify('Stock adjustment recorded.')
       setAdjustTarget(null)
-      notify('Stock adjustment recorded in the audit history.')
       refresh()
     } catch (error) {
       notify(error.message || 'Stock could not be adjusted.', 'error')
@@ -393,26 +280,22 @@ export default function StockPage({ refresh }) {
     }
   }
 
+  const exportStock = async () => {
+    const { exportStockPDF } = await import('../utils/reports.js')
+    exportStockPDF(rows, totals)
+  }
+
   return (
     <Box className="page-stack">
       <PageHeader
         title="Stock"
-        subtitle="Manage product catalog, stock batches, sold quantities, and stock value."
+        subtitle="Manage product stock by stable variants."
         actions={
           <>
-            <Button
-              variant="outlined"
-              startIcon={<SettingsRoundedIcon />}
-              onClick={() => setSettingsOpen(true)}
-            >
-              Settings
+            <Button variant="outlined" startIcon={<SettingsRoundedIcon />} onClick={() => navigate('settings')}>
+              App Settings
             </Button>
-            <Button
-              variant="outlined"
-              color="error"
-              startIcon={<PictureAsPdfRoundedIcon />}
-              onClick={handleExportStockPDF}
-            >
+            <Button variant="outlined" color="error" startIcon={<PictureAsPdfRoundedIcon />} onClick={exportStock}>
               Export PDF
             </Button>
             <Button variant="contained" color="success" startIcon={<AddRoundedIcon />} onClick={openStockDialog}>
@@ -422,61 +305,13 @@ export default function StockPage({ refresh }) {
         }
       />
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Box className="form-grid">
-          <FormControl size="small" className="span-3">
-            <InputLabel>Type</InputLabel>
-            <Select label="Type" value={filters.type} onChange={(event) => updateFilter('type', event.target.value)}>
-              <MenuItem value="">All Types</MenuItem>
-              {state.productTypes.map((type) => (
-                <MenuItem key={type} value={type}>
-                  {type}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" className="span-3">
-            <InputLabel>Size</InputLabel>
-            <Select label="Size" value={filters.size} onChange={(event) => updateFilter('size', event.target.value)}>
-              <MenuItem value="">All Sizes</MenuItem>
-              {SIZE_OPTIONS.map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" className="span-3">
-            <InputLabel>Color</InputLabel>
-            <Select label="Color" value={filters.color} onChange={(event) => updateFilter('color', event.target.value)}>
-              <MenuItem value="">All Colors</MenuItem>
-              {state.productColors.map((color) => (
-                <MenuItem key={color} value={color}>
-                  {color}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <TextField
-            className="span-3"
-            type="date"
-            label="From"
-            value={filters.from}
-            onChange={(event) => updateFilter('from', event.target.value)}
-            slotProps={{ inputLabel: { shrink: true } }}
-            size="small"
-          />
-          <TextField
-            className="span-3"
-            type="date"
-            label="To"
-            value={filters.to}
-            onChange={(event) => updateFilter('to', event.target.value)}
-            slotProps={{ inputLabel: { shrink: true } }}
-            size="small"
-          />
-        </Box>
-      </Paper>
+      <TextField
+        label="Search stock"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search product, variant, option value, note, price, or date"
+        fullWidth
+      />
 
       <div className="metric-grid wide">
         <MetricCard title="Available Stock" value={totals.totalAvailable} tone="success" />
@@ -489,58 +324,29 @@ export default function StockPage({ refresh }) {
 
       <Box className="mobile-data-list">
         {rows.map((row) => (
-          <Paper
-            key={`${row.date}-${row.size}-${row.color}-${row.type}-${row.unitCost}-${row.salePrice}`}
-            variant="outlined"
-            className="mobile-data-card"
-          >
+          <Paper key={`${row.date}-${row.variantId || row.productName}-${row.unitCost}`} variant="outlined" className="mobile-data-card">
             <Stack direction="row" sx={{ justifyContent: 'space-between', gap: 2 }}>
               <Box>
-                <Typography fontWeight={900}>{row.type}</Typography>
+                <Typography fontWeight={900}>{row.productName}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {row.size} · {row.color} · {row.date}
+                  {row.variantName} - {row.date}
                 </Typography>
               </Box>
-              <Chip
-                size="small"
-                label={`${row.available} available`}
-                color={getStockTone(row.available)}
-                variant="outlined"
-              />
+              <Chip size="small" label={`${row.available} available`} color={stockTone(row.available)} variant="outlined" />
             </Stack>
             <Box className="mobile-detail-grid">
               <MobileDetail label="Stock" value={row.adjustedQty} />
-              <MobileDetail label="Reserved/Sold" value={row.sold} />
+              <MobileDetail label="Sold" value={row.sold} />
               <MobileDetail label="Unit Cost" value={formatKs(row.unitCost)} />
               <MobileDetail label="Sale Price" value={formatKs(row.salePrice)} />
             </Box>
             <Stack direction="row" gap={1}>
-              <Button
-                fullWidth
-                variant="outlined"
-                onClick={() => {
-                  setAdjustDraft({
-                    action: 'ADD',
-                    quantity: 1,
-                    date: getToday(),
-                    reason: '',
-                  })
-                  setAdjustTarget(row)
-                }}
-              >
-                Adjust
-              </Button>
-              <Button fullWidth color="error" variant="outlined" onClick={() => deleteStock(row)}>
-                Delete
-              </Button>
+              <Button fullWidth variant="outlined" onClick={() => setAdjustTarget(row)}>Adjust</Button>
+              <Button fullWidth color="error" variant="outlined" onClick={() => deleteStock(row)}>Delete</Button>
             </Stack>
           </Paper>
         ))}
-        {!rows.length ? (
-          <Box className="empty-state">
-            <Typography fontWeight={800}>No stock records</Typography>
-          </Box>
-        ) : null}
+        {!rows.length ? <EmptyStock /> : null}
       </Box>
 
       <TableContainer component={Paper} variant="outlined" className="desktop-data-table">
@@ -549,58 +355,34 @@ export default function StockPage({ refresh }) {
             <TableRow>
               <TableCell>No</TableCell>
               <TableCell>Date</TableCell>
-              <TableCell>Size</TableCell>
-              <TableCell>Color</TableCell>
-              <TableCell>Type</TableCell>
+              <TableCell>Product</TableCell>
+              <TableCell>Variant</TableCell>
               <TableCell align="right">Unit Cost</TableCell>
               <TableCell align="right">Sale Price</TableCell>
               <TableCell align="right">Total Stock</TableCell>
               <TableCell align="right">Sold</TableCell>
               <TableCell align="right">Available</TableCell>
-              <TableCell align="right">Delivery Cost</TableCell>
               <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {rows.map((row, index) => (
-              <TableRow key={`${row.date}-${row.size}-${row.color}-${row.type}-${row.unitCost}-${row.salePrice}`}>
+              <TableRow key={`${row.date}-${row.variantId || row.productName}-${row.unitCost}`}>
                 <TableCell>{index + 1}</TableCell>
                 <TableCell>{row.date}</TableCell>
-                <TableCell>{row.size}</TableCell>
-                <TableCell>{row.color}</TableCell>
-                <TableCell>{row.type}</TableCell>
+                <TableCell>{row.productName}</TableCell>
+                <TableCell>{row.variantName}</TableCell>
                 <TableCell align="right">{formatKs(row.unitCost)}</TableCell>
                 <TableCell align="right">{formatKs(row.salePrice)}</TableCell>
                 <TableCell align="right">{row.adjustedQty}</TableCell>
                 <TableCell align="right">{row.sold}</TableCell>
                 <TableCell align="right">
-                  <Chip size="small" label={row.available} color={getStockTone(row.available)} variant="outlined" />
+                  <Chip size="small" label={row.available} color={stockTone(row.available)} variant="outlined" />
                 </TableCell>
-                <TableCell align="right">{formatKs(row.deli)}</TableCell>
                 <TableCell>
                   <Box className="table-actions">
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => {
-                        setAdjustDraft({
-                          action: 'ADD',
-                          quantity: 1,
-                          date: getToday(),
-                          reason: '',
-                        })
-                        setAdjustTarget(row)
-                      }}
-                    >
-                      Adjust
-                    </Button>
-                    <Button
-                      size="small"
-                      color="error"
-                      variant="outlined"
-                      startIcon={<DeleteOutlineRoundedIcon />}
-                      onClick={() => deleteStock(row)}
-                    >
+                    <Button size="small" variant="outlined" onClick={() => setAdjustTarget(row)}>Adjust</Button>
+                    <Button size="small" color="error" variant="outlined" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => deleteStock(row)}>
                       Delete
                     </Button>
                   </Box>
@@ -609,9 +391,7 @@ export default function StockPage({ refresh }) {
             ))}
             {!rows.length ? (
               <TableRow>
-                <TableCell colSpan={12} align="center">
-                  No stock records
-                </TableCell>
+                <TableCell colSpan={10} align="center">No stock records</TableCell>
               </TableRow>
             ) : null}
           </TableBody>
@@ -621,138 +401,59 @@ export default function StockPage({ refresh }) {
       <Dialog open={stockDialogOpen} onClose={() => setStockDialogOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Add Stock</DialogTitle>
         <DialogContent dividers>
+          {!data.products.length ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Create a product in App Settings before adding stock.
+            </Alert>
+          ) : null}
           <Box className="form-grid" sx={{ pt: 1 }}>
-            <TextField
-              className="span-6"
-              type="date"
-              label="Received Date"
-              value={stockForm.date}
-              onChange={(event) => setStockForm((current) => ({ ...current, date: event.target.value }))}
-              slotProps={{ inputLabel: { shrink: true } }}
-              required
-            />
-            <TextField
-              className="span-6"
-              type="number"
-              label="Delivery Cost"
-              value={stockForm.deli}
-              onChange={(event) => setStockForm((current) => ({ ...current, deli: event.target.value }))}
-              slotProps={{ htmlInput: { min: 0 } }}
-            />
             <FormControl className="span-6">
-              <InputLabel>Size</InputLabel>
-              <Select
-                label="Size"
-                value={stockForm.size}
-                onChange={(event) => setStockForm((current) => ({ ...current, size: event.target.value }))}
-              >
-                {SIZE_OPTIONS.map((size) => (
-                  <MenuItem key={size} value={size}>
-                    {size}
-                  </MenuItem>
+              <InputLabel>Product</InputLabel>
+              <Select label="Product" value={stockForm.productId} onChange={(event) => updateProduct(event.target.value)}>
+                {data.products.map((product) => (
+                  <MenuItem key={product.id} value={product.id}>{product.name}</MenuItem>
                 ))}
               </Select>
             </FormControl>
-            <FormControl className="span-6">
-              <InputLabel>Color</InputLabel>
-              <Select
-                label="Color"
-                value={stockForm.color}
-                onChange={(event) => setStockForm((current) => ({ ...current, color: event.target.value }))}
-              >
-                {state.productColors.map((color) => (
-                  <MenuItem key={color} value={color}>
-                    {color}
-                  </MenuItem>
+            <FormControl className="span-6" disabled={!selectedProduct?.variants?.length}>
+              <InputLabel>Final variant</InputLabel>
+              <Select label="Final variant" value={stockForm.variantId} onChange={(event) => updateVariant(event.target.value)}>
+                {(selectedProduct?.variants || []).filter((variant) => variant.isActive !== false).map((variant) => (
+                  <MenuItem key={variant.id} value={variant.id}>{variantDisplayName(variant)}</MenuItem>
                 ))}
               </Select>
             </FormControl>
-            <FormControl className="span-6">
-              <InputLabel>Type</InputLabel>
-              <Select
-                label="Type"
-                value={stockForm.type}
-                onChange={(event) => setStockForm((current) => ({ ...current, type: event.target.value }))}
-              >
-                {state.productTypes.map((type) => (
-                  <MenuItem key={type} value={type}>
-                    {type}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <TextField
-              className="span-6"
-              type="number"
-              label="Unit Cost"
-              value={stockForm.unitCost}
-              onChange={(event) => setStockForm((current) => ({ ...current, unitCost: event.target.value }))}
-              slotProps={{ htmlInput: { min: 0 } }}
-              required
-            />
-            <TextField
-              className="span-6"
-              type="number"
-              label="Sale Price"
-              value={stockForm.salePrice}
-              onChange={(event) => setStockForm((current) => ({ ...current, salePrice: event.target.value }))}
-              slotProps={{ htmlInput: { min: 0 } }}
-              required
-            />
-            <TextField
-              className="span-12"
-              type="number"
-              label="Quantity"
-              value={stockForm.quantity}
-              onChange={(event) => setStockForm((current) => ({ ...current, quantity: event.target.value }))}
-              slotProps={{ htmlInput: { min: 1 } }}
-              required
-            />
+            <TextField className="span-4" type="date" label="Received Date" value={stockForm.date} onChange={(event) => setStockForm((current) => ({ ...current, date: event.target.value }))} slotProps={{ inputLabel: { shrink: true } }} />
+            <TextField className="span-4" type="number" label="Unit Cost" value={stockForm.unitCost} onChange={(event) => setStockForm((current) => ({ ...current, unitCost: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
+            <TextField className="span-4" type="number" label="Sale Price" value={stockForm.salePrice} onChange={(event) => setStockForm((current) => ({ ...current, salePrice: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
+            <TextField className="span-6" type="number" label="Quantity to add" value={stockForm.quantity} onChange={(event) => setStockForm((current) => ({ ...current, quantity: event.target.value }))} slotProps={{ htmlInput: { min: 1 } }} />
+            <TextField className="span-6" type="number" label="Delivery Cost" value={stockForm.deli} onChange={(event) => setStockForm((current) => ({ ...current, deli: event.target.value }))} slotProps={{ htmlInput: { min: 0 } }} />
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setStockDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" color="success" onClick={saveStock}>
-            Save Stock
-          </Button>
+          <Button variant="contained" color="success" onClick={saveStock} disabled={!data.products.length}>Save Stock</Button>
         </DialogActions>
       </Dialog>
-      <Dialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        fullScreen={mobile}
-        fullWidth
-        maxWidth="md"
-      >
-        <DialogTitle>Stock settings</DialogTitle>
+
+      <Dialog open={Boolean(adjustTarget)} onClose={() => setAdjustTarget(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Adjust stock</DialogTitle>
         <DialogContent dividers>
-          <Box className="catalog-settings-grid">
-            <CatalogSection
-              title="Product Types"
-              inputLabel="Add product type"
-              value={newType}
-              onChange={setNewType}
-              onAdd={addType}
-              items={state.productTypes}
-              usage={catalogUsage.types}
-              onDelete={deleteType}
-            />
-            <CatalogSection
-              title="Product Colors"
-              inputLabel="Add product color"
-              value={newColor}
-              onChange={setNewColor}
-              onAdd={addColor}
-              items={state.productColors}
-              usage={catalogUsage.colors}
-              onDelete={deleteColor}
-            />
-          </Box>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField select label="Action" value={adjustDraft.action} onChange={(event) => setAdjustDraft((current) => ({ ...current, action: event.target.value }))}>
+              <MenuItem value="ADD">Add stock</MenuItem>
+              <MenuItem value="SUB">Remove stock</MenuItem>
+            </TextField>
+            <TextField type="number" label="Quantity" value={adjustDraft.quantity} onChange={(event) => setAdjustDraft((current) => ({ ...current, quantity: event.target.value }))} slotProps={{ htmlInput: { min: 1 } }} />
+            <TextField label="Reason" value={adjustDraft.reason} onChange={(event) => setAdjustDraft((current) => ({ ...current, reason: event.target.value }))} multiline minRows={3} />
+          </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setSettingsOpen(false)}>Done</Button>
+          <Button onClick={() => setAdjustTarget(null)} disabled={confirmBusy}>Cancel</Button>
+          <Button variant="contained" onClick={saveAdjustment} disabled={confirmBusy}>{confirmBusy ? 'Saving...' : 'Save adjustment'}</Button>
         </DialogActions>
       </Dialog>
+
       <ConfirmDialog
         open={Boolean(confirmAction)}
         title={confirmAction?.title || 'Confirm action'}
@@ -761,126 +462,22 @@ export default function StockPage({ refresh }) {
         onCancel={() => setConfirmAction(null)}
         onConfirm={executeConfirmedAction}
       />
-      <Dialog
-        open={Boolean(adjustTarget)}
-        onClose={() => setAdjustTarget(null)}
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogTitle>Adjust stock</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <Alert severity="info">
-              Every adjustment records the before/after quantity, reason, date, and audit event.
-            </Alert>
-            <FormControl>
-              <InputLabel>Action</InputLabel>
-              <Select
-                label="Action"
-                value={adjustDraft.action}
-                onChange={(event) =>
-                  setAdjustDraft((current) => ({ ...current, action: event.target.value }))
-                }
-              >
-                <MenuItem value="ADD">Add stock</MenuItem>
-                <MenuItem value="SUB">Remove stock</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              type="number"
-              label="Quantity"
-              value={adjustDraft.quantity}
-              onChange={(event) =>
-                setAdjustDraft((current) => ({ ...current, quantity: event.target.value }))
-              }
-              slotProps={{ htmlInput: { min: 1 } }}
-            />
-            <TextField
-              type="date"
-              label="Adjustment date"
-              value={adjustDraft.date}
-              onChange={(event) =>
-                setAdjustDraft((current) => ({ ...current, date: event.target.value }))
-              }
-              slotProps={{ inputLabel: { shrink: true } }}
-            />
-            <TextField
-              label="Reason"
-              value={adjustDraft.reason}
-              onChange={(event) =>
-                setAdjustDraft((current) => ({ ...current, reason: event.target.value }))
-              }
-              multiline
-              minRows={3}
-              required
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAdjustTarget(null)} disabled={confirmBusy}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={saveAdjustment} disabled={confirmBusy}>
-            {confirmBusy ? 'Saving…' : 'Save adjustment'}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   )
 }
 
-function CatalogSection({ title, inputLabel, value, onChange, onAdd, items, usage, onDelete }) {
+function EmptyStock() {
   return (
-    <Paper variant="outlined" className="catalog-settings-section">
-      <Typography variant="h6">{title}</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ mt: 2 }}>
-        <TextField
-          label={inputLabel}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          size="small"
-          fullWidth
-        />
-        <Button variant="contained" onClick={onAdd}>
-          Add
-        </Button>
-      </Stack>
-      <Stack spacing={1} sx={{ mt: 2 }}>
-        {items.map((item) => (
-          <Box key={item} className="catalog-setting-row">
-            <Box>
-              <Typography fontWeight={800}>{item}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                Used in {usage[item] || 0} record(s)
-              </Typography>
-            </Box>
-            <Button
-              size="small"
-              color="error"
-              startIcon={<DeleteOutlineRoundedIcon />}
-              disabled={Boolean(usage[item])}
-              onClick={() => onDelete(item)}
-            >
-              Delete
-            </Button>
-          </Box>
-        ))}
-        {!items.length ? (
-          <Box className="empty-state compact">
-            <Typography color="text.secondary">No items configured.</Typography>
-          </Box>
-        ) : null}
-      </Stack>
-    </Paper>
+    <Box className="empty-state">
+      <Typography fontWeight={800}>No stock records</Typography>
+    </Box>
   )
 }
 
 function MobileDetail({ label, value }) {
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary">
-        {label}
-      </Typography>
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
       <Typography fontWeight={800}>{value}</Typography>
     </Box>
   )
