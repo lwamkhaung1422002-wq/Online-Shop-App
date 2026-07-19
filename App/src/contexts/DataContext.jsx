@@ -17,12 +17,13 @@ export function DataProvider({ children }) {
     if (user.preview) {
       setData(previewData)
       setError('')
-      return
+      return previewData
     }
 
     setError('')
     const nextData = await refreshUserData(user.uid)
     setData(nextData)
+    return nextData
   }, [user])
 
   useEffect(() => {

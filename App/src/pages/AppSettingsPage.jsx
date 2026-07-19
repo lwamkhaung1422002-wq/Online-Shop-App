@@ -67,6 +67,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
   const settings = useMemo(() => normalizeCatalogSettings(data.catalogSettings), [data.catalogSettings])
   const [productDraft, setProductDraft] = useState(emptyProductDraft)
   const [selectedValueIds, setSelectedValueIds] = useState([])
+  const [valueDrafts, setValueDrafts] = useState({})
   const [methodDraft, setMethodDraft] = useState(paymentDraft)
   const [paymentMethods, setPaymentMethods] = useState(() => settings.paymentMethods)
   const [saving, setSaving] = useState(false)
@@ -89,6 +90,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
   const resetProduct = () => {
     setProductDraft(emptyProductDraft())
     setSelectedValueIds([])
+    setValueDrafts({})
   }
 
   const updateLevelLabel = (index, label) => {
@@ -107,7 +109,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         ...current.optionTree,
         levels: [
           ...current.optionTree.levels,
-          { id: createOptionId('level'), label: `Option ${current.optionTree.levels.length + 1}` },
+          { id: createOptionId('level'), label: '' },
         ],
       },
     }))
@@ -127,10 +129,32 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     setSelectedValueIds((current) => current.slice(0, nextDepth))
   }
 
+  const updateValueDraft = (levelId, value) => {
+    setValueDrafts((current) => ({ ...current, [levelId]: value }))
+  }
+
+  const selectValue = (levelIndex, valueId) => {
+    setSelectedValueIds((current) => [
+      ...current.slice(0, levelIndex),
+      valueId,
+    ])
+  }
+
   const addValue = (levelIndex, parentId) => {
-    const label = window.prompt(`New ${tree.levels[levelIndex]?.label || 'option'} value`)
-    const trimmed = String(label || '').trim()
+    const level = tree.levels[levelIndex]
+    if (!level?.label.trim()) {
+      notify('Enter the option name first.', 'warning')
+      return
+    }
+    const trimmed = String(valueDrafts[level?.id] || '').trim()
     if (!trimmed) return
+    const duplicate = optionValuesForLevel(tree, levelIndex, levelIndex === 0 ? null : parentId)
+      .some((value) => value.label.trim().toLowerCase() === trimmed.toLowerCase())
+    if (duplicate) {
+      notify('This option value already exists.', 'warning')
+      return
+    }
+    const valueId = createOptionId('value')
     setProductDraft((current) => ({
       ...current,
       optionTree: {
@@ -138,7 +162,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         values: [
           ...current.optionTree.values,
           {
-            id: createOptionId('value'),
+            id: valueId,
             label: trimmed,
             level: levelIndex,
             parentId: levelIndex === 0 ? null : parentId,
@@ -146,6 +170,11 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         ],
       },
     }))
+    setSelectedValueIds((current) => [
+      ...current.slice(0, levelIndex),
+      valueId,
+    ])
+    setValueDrafts((current) => ({ ...current, [level.id]: '' }))
   }
 
   const renameValue = (valueId) => {
@@ -200,6 +229,11 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
       notify('Product name is required.', 'warning')
       return
     }
+    const emptyOptionIndex = tree.levels.findIndex((level) => !level.label.trim())
+    if (emptyOptionIndex >= 0) {
+      notify(`Option ${emptyOptionIndex + 1} name is required.`, 'warning')
+      return
+    }
     setSaving(true)
     try {
       const payload = {
@@ -213,7 +247,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         : await createProductDocument(user.uid, payload)
       const savedProduct = result.product || result
       notify('Product settings saved.')
-      refresh()
+      await refresh()
       loadProduct({ ...savedProduct, variants: savedProduct.variants || productDraft.variants })
     } catch (error) {
       notify(error.message || 'Product settings could not be saved.', 'error')
@@ -235,14 +269,19 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     }
     setSaving(true)
     try {
-      await createVariantDocument(user.uid, productDraft.id, {
+      const result = await createVariantDocument(user.uid, productDraft.id, {
         name: path.length ? path.map((entry) => entry.value).join(' / ') : 'Default',
         price: Number(productDraft.price || 0),
         cost: Number(productDraft.cost || 0),
         optionPath: path,
       })
+      const createdVariant = result.variant || result
       notify('Variant added.')
-      refresh()
+      setProductDraft((current) => ({
+        ...current,
+        variants: [...(current.variants || []), createdVariant],
+      }))
+      await refresh()
       setSelectedValueIds([])
     } catch (error) {
       notify(error.message || 'Variant could not be added.', 'error')
@@ -257,7 +296,11 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     try {
       await deleteVariantDocument(user.uid, productDraft.id, variant.id)
       notify('Variant removed or archived.')
-      refresh()
+      setProductDraft((current) => ({
+        ...current,
+        variants: (current.variants || []).filter((entry) => String(entry.id) !== String(variant.id)),
+      }))
+      await refresh()
     } catch (error) {
       notify(error.message || 'Variant could not be removed.', 'error')
     } finally {
@@ -315,7 +358,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     try {
       await savePaymentMethods(user.uid, normalizePaymentMethods(paymentMethods))
       notify('Payment methods saved.')
-      refresh()
+      await refresh()
     } catch (error) {
       notify(error.message || 'Payment methods could not be saved.', 'error')
     } finally {
@@ -368,24 +411,14 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
                     onChange={(event) => updateLevelLabel(index, event.target.value)}
                     fullWidth
                   />
-                  <FormControl fullWidth>
-                    <InputLabel>{level.label}</InputLabel>
-                    <Select
-                      label={level.label}
-                      value={selectedValueIds[index] || ''}
-                      onChange={(event) =>
-                        setSelectedValueIds((current) => [
-                          ...current.slice(0, index),
-                          event.target.value,
-                        ])
-                      }
-                      disabled={index > 0 && !parentId}
-                    >
-                      {values.map((value) => (
-                        <MenuItem key={value.id} value={value.id}>{value.label}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                  <TextField
+                    label={`${level.label || `Option ${index + 1}`} value`}
+                    placeholder={index === 0 ? 'Size 1' : 'Red'}
+                    value={valueDrafts[level.id] || ''}
+                    onChange={(event) => updateValueDraft(level.id, event.target.value)}
+                    disabled={index > 0 && !parentId}
+                    fullWidth
+                  />
                   <Button variant="outlined" onClick={() => addValue(index, parentId)} disabled={index > 0 && !parentId}>
                     Add value
                   </Button>
@@ -398,12 +431,19 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
                     <Chip
                       key={value.id}
                       label={value.label}
-                      onClick={() => renameValue(value.id)}
+                      color={selectedValueIds[index] === value.id ? 'primary' : 'default'}
+                      variant={selectedValueIds[index] === value.id ? 'filled' : 'outlined'}
+                      onClick={() => selectValue(index, value.id)}
                       onDelete={() => removeValue(value.id)}
                       deleteIcon={<DeleteOutlineRoundedIcon />}
                     />
                   ))}
                   {!values.length ? <Typography variant="body2" color="text.secondary">No values yet.</Typography> : null}
+                  {selectedValueIds[index] ? (
+                    <Button size="small" variant="text" onClick={() => renameValue(selectedValueIds[index])}>
+                      Edit selected
+                    </Button>
+                  ) : null}
                 </Stack>
               </Paper>
             )

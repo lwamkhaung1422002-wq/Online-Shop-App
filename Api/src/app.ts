@@ -37,13 +37,21 @@ const allowedOrigins =
     ? configuredOrigins
     : [...configuredOrigins, ...localOrigins];
 
+function isAllowedDevelopmentOrigin(origin: string | undefined) {
+  return Boolean(
+    origin &&
+      process.env.NODE_ENV !== "production" &&
+      /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin),
+  );
+}
+
 app.use(helmet());
 app.use(pinoHttp());
 app.use(compression());
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || isAllowedDevelopmentOrigin(origin)) {
         callback(null, true);
         return;
       }

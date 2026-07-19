@@ -100,10 +100,10 @@ export function normalizeOptionTree(tree = {}) {
         .slice(0, MAX_OPTION_LEVELS)
         .map((level, index) => ({
           id: String(level.id || `level-${index + 1}`).trim(),
-          label: String(level.label || `Option ${index + 1}`).trim(),
+          label: String(level.label ?? '').trim(),
           level: index,
         }))
-        .filter((level) => level.id && level.label)
+        .filter((level) => level.id)
     : []
 
   const values = Array.isArray(tree.values)

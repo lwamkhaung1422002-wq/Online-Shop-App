@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -87,6 +87,12 @@ export default function OrderPage({ navigate, requireAuth }) {
   const totals = useMemo(() => calculateOrderTotals(items, orderDiscount, orderType === 'online' ? deliveryFee : 0), [deliveryFee, items, orderDiscount, orderType])
   const payNow = orderType === 'in-store' || paymentMode === 'pay-now'
   const paymentIsCod = orderType === 'online' && isCodPaymentMethod(payment.method, settings)
+
+  useEffect(() => {
+    if (lineDraft.productId || !data.products.length) return
+    const handle = window.setTimeout(() => setLineDraft(initialLine(data)), 0)
+    return () => window.clearTimeout(handle)
+  }, [data, lineDraft.productId])
 
   const updateLineProduct = (productId) => {
     const product = data.products.find((entry) => String(entry.id) === String(productId))
