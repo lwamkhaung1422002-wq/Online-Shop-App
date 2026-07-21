@@ -39,6 +39,9 @@ import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
 import PageHeader from '../components/PageHeader.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import SectionCard from '../components/SectionCard.jsx'
+import EmptyState from '../components/EmptyState.jsx'
+import StatusChip from '../components/StatusChip.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
@@ -91,7 +94,7 @@ function ItemsSummary({ order }) {
 }
 
 export default function SalesPage({ navigate, refresh, requireAuth }) {
-  const mobile = useMediaQuery('(max-width:767px)')
+  const mobile = useMediaQuery('(max-width:899px)')
   const { user } = useAuth()
   const { data } = useData()
   const { notify } = useFeedback()
@@ -240,7 +243,7 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
         }
       />
 
-      <Paper variant="outlined" className="section-card">
+      <SectionCard>
         <Box className="sales-date-toolbar">
           <Box>
             <Typography fontWeight={900}>Date filter</Typography>
@@ -304,7 +307,7 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
             </ToggleButtonGroup>
           </Box>
         )}
-      </Paper>
+      </SectionCard>
 
       {mobile ? (
         <Box className="mobile-order-list">
@@ -322,12 +325,12 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
             />
           ))}
           {!filteredOrders.length ? (
-            <Paper variant="outlined" className="empty-state">
-              <Typography fontWeight={700}>No matching orders</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Adjust the filters or create a new order.
-              </Typography>
-            </Paper>
+            <EmptyState
+              title="No matching orders"
+              message="Adjust the filters or create a new order."
+              actionLabel="New order"
+              onAction={() => navigate('order')}
+            />
           ) : null}
         </Box>
       ) : (
@@ -364,19 +367,10 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
                   <TableCell align="right">{getOrderQuantity(order)}</TableCell>
                   <TableCell align="right">{formatKs(order.total)}</TableCell>
                   <TableCell>
-                    <Chip
-                      size="small"
-                      color={statusColor(order.fulfillmentStatus)}
-                      label={order.fulfillmentStatus}
-                    />
+                    <StatusChip status={order.fulfillmentStatus} />
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      size="small"
-                      variant="outlined"
-                      color={order.paymentStatus === 'paid' ? 'success' : 'default'}
-                      label={order.paymentStatus}
-                    />
+                    <StatusChip status={order.paymentStatus} />
                   </TableCell>
                   <TableCell align="center">
                     <DesktopOrderActions
@@ -396,10 +390,11 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
                 <TableRow>
                   <TableCell colSpan={8}>
                     <Box className="empty-state">
-                      <Typography fontWeight={700}>No matching orders</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Adjust the search or create a new order.
-                      </Typography>
+                      <EmptyState
+                        compact
+                        title="No matching orders"
+                        message="Adjust the filters or create a new order."
+                      />
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -409,7 +404,7 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
         </TableContainer>
       )}
 
-      <Paper variant="outlined" className="section-card">
+      <SectionCard>
         <Stack
           direction={{ xs: 'column', sm: 'row' }}
           gap={1}
@@ -420,7 +415,7 @@ export default function SalesPage({ navigate, refresh, requireAuth }) {
           </Typography>
           <Typography fontWeight={900}>Total: {formatKs(totals.amount)}</Typography>
         </Stack>
-      </Paper>
+      </SectionCard>
 
       <ConfirmDialog
         open={Boolean(cancelTarget)}

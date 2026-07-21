@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 
 import type { Prisma } from "../generated/prisma/client.js";
+import { writeAuditLog } from "../lib/audit-log.js";
 import { prisma } from "../lib/prisma.js";
 import { assertUserOwnsShop } from "../lib/shop-access.js";
 import { getAuthUser, requireAuth } from "../middleware/auth.middleware.js";
@@ -19,6 +20,8 @@ const createInventoryBatchSchema = z.object({
   variantId: z.string().trim().optional(),
   quantity: z.coerce.number().int().positive("Quantity must be greater than 0."),
   unitCost: moneySchema,
+  deliveryCost: moneySchema.optional(),
+  deliveryMethod: z.string().trim().optional(),
   receivedAt: z.coerce.date().optional(),
   note: z.string().trim().optional(),
 });
@@ -129,12 +132,45 @@ inventoryRouter.post("/:shopId/inventory", async (request, response, next) => {
       ...(input.note !== undefined ? { note: input.note } : {}),
     };
 
-    const inventoryBatch = await prisma.inventoryBatch.create({
-      data,
-      include: {
-        product: true,
-        variant: true,
-      },
+    const inventoryBatch = await prisma.$transaction(async (tx) => {
+      const createdBatch = await tx.inventoryBatch.create({
+        data,
+        include: {
+          product: true,
+          variant: true,
+        },
+      });
+
+      if (input.deliveryCost && input.deliveryCost > 0) {
+        await tx.expense.create({
+          data: {
+            shopId,
+            title: `Stock delivery - ${createdBatch.product.name}`,
+            category: "Stock Delivery",
+            method: input.deliveryMethod ?? "Other",
+            amount: input.deliveryCost,
+            spentAt: input.receivedAt ?? new Date(),
+            note: `Auto-recorded from inventory batch ${createdBatch.id}.`,
+          },
+        });
+      }
+
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "inventory.create",
+        entity: "InventoryBatch",
+        entityId: createdBatch.id,
+        metadata: {
+          productId: input.productId,
+          variantId: input.variantId ?? null,
+          quantity: input.quantity,
+          unitCost: input.unitCost,
+          deliveryCost: input.deliveryCost ?? 0,
+        },
+      });
+
+      return createdBatch;
     });
 
     response.status(201).json({ inventoryBatch });
@@ -167,13 +203,25 @@ inventoryRouter.patch("/:shopId/inventory/:inventoryBatchId", async (request, re
       ...(input.note !== undefined ? { note: input.note } : {}),
     };
 
-    const inventoryBatch = await prisma.inventoryBatch.update({
-      where: { id: inventoryBatchId },
-      data,
-      include: {
-        product: true,
-        variant: true,
-      },
+    const inventoryBatch = await prisma.$transaction(async (tx) => {
+      const updatedBatch = await tx.inventoryBatch.update({
+        where: { id: inventoryBatchId },
+        data,
+        include: {
+          product: true,
+          variant: true,
+        },
+      });
+
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "inventory.update",
+        entity: "InventoryBatch",
+        entityId: inventoryBatchId,
+      });
+
+      return updatedBatch;
     });
 
     response.status(200).json({ inventoryBatch });
@@ -203,8 +251,17 @@ inventoryRouter.delete("/:shopId/inventory/:inventoryBatchId", async (request, r
       throw badRequest("Inventory batch has reserved stock and cannot be deleted.");
     }
 
-    await prisma.inventoryBatch.delete({
-      where: { id: inventoryBatchId },
+    await prisma.$transaction(async (tx) => {
+      await tx.inventoryBatch.delete({
+        where: { id: inventoryBatchId },
+      });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "inventory.delete",
+        entity: "InventoryBatch",
+        entityId: inventoryBatchId,
+      });
     });
 
     response.status(204).send();
@@ -268,6 +325,22 @@ inventoryRouter.post(
         const adjustment = await tx.stockAdjustment.create({
           data: {
             shopId,
+            inventoryBatchId,
+            action,
+            quantity: input.quantity,
+            beforeQuantity,
+            afterQuantity,
+            reason: input.reason,
+          },
+        });
+
+        await writeAuditLog(tx, {
+          shopId,
+          actorId: authUser.id,
+          action: "inventory.adjust",
+          entity: "StockAdjustment",
+          entityId: adjustment.id,
+          metadata: {
             inventoryBatchId,
             action,
             quantity: input.quantity,

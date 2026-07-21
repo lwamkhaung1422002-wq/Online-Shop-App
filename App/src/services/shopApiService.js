@@ -114,7 +114,7 @@ function mapOrder(order, payments = []) {
   const settlementPaidAmount = settlement?.allocations?.find((allocation) => String(allocation.orderId) === String(order.id))?.amount || 0
   const paidAmount = Math.max(0, directPaidAmount + Number(settlementPaidAmount || 0))
   const advancedPaymentAmount = directPayments
-    .filter((payment) => /advanced payment/i.test(String(payment.note || '')))
+    .filter((payment) => payment.scope === 'advanced-payment' || /advanced payment/i.test(String(payment.note || '')))
     .reduce((sum, payment) => sum + Math.max(0, Number(payment.amount || 0)), 0)
 
   return {
@@ -352,6 +352,7 @@ function paymentPayload(details, amount) {
   const isCash = String(details.method || '').trim().toLowerCase() === 'cash'
   return {
     method: details.method,
+    scope: details.scope,
     amount: Number(details.amount || amount || 0),
     billNumber: isCod ? details.billNumber : undefined,
     transactionId: isCash ? undefined : details.transactionId,
@@ -541,19 +542,11 @@ export async function createStockBatch(uid, stock) {
     variantId: variant?.id,
     quantity: Number(stock.quantity || 0),
     unitCost: Number(stock.unitCost || 0),
+    deliveryCost: Number(stock.deli || 0) || undefined,
+    deliveryMethod: stock.deliveryMethod || stock.method || undefined,
     receivedAt: stock.date ? new Date(stock.date).toISOString() : undefined,
     note: stock.deli ? `Delivery cost: ${stock.deli}` : undefined,
   })
-
-  if (Number(stock.deli || 0) > 0) {
-    await api.createExpense(shopId, {
-      title: `Stock delivery - ${stock.type || 'Product'}`,
-      category: 'Stock Delivery',
-      amount: Number(stock.deli || 0),
-      spentAt: stock.date ? new Date(stock.date).toISOString() : undefined,
-      note: `Auto-recorded from Add Stock${inventory.inventoryBatch?.id ? ` (${inventory.inventoryBatch.id})` : ''}`,
-    })
-  }
 
   return inventory
 }
@@ -574,9 +567,10 @@ export async function createExpenseDocument(uid, expense) {
   return api.createExpense(shopIdFrom(uid), {
     title: expense.title,
     category: expense.type,
+    method: expense.method,
     amount: Number(expense.amount || 0),
     spentAt: expense.date ? new Date(expense.date).toISOString() : undefined,
-    note: [expense.method, expense.note].filter(Boolean).join(' · '),
+    note: expense.note,
   })
 }
 
@@ -584,9 +578,10 @@ export function updateExpenseDocument(uid, expense) {
   return api.updateExpense(shopIdFrom(uid), expense.id, {
     title: expense.title,
     category: expense.type,
+    method: expense.method,
     amount: Number(expense.amount || 0),
     spentAt: expense.date ? new Date(expense.date).toISOString() : undefined,
-    note: [expense.method, expense.note].filter(Boolean).join(' · '),
+    note: expense.note,
   })
 }
 

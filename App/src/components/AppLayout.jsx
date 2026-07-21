@@ -93,9 +93,11 @@ export default function AppLayout({
         }}
       >
         <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            {shopName}
-          </Typography>
+          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+            <Typography variant="h6" noWrap>
+              {shopName}
+            </Typography>
+          </Box>
           {!preview && userEmail ? (
             <Typography
               variant="body2"
@@ -110,7 +112,7 @@ export default function AppLayout({
           </Typography>
           <Button
             size="small"
-            variant="outlined"
+            variant={preview ? 'contained' : 'outlined'}
             startIcon={preview ? <RocketLaunchRoundedIcon /> : <LogoutRoundedIcon />}
             onClick={preview ? onGetStarted : onLogout}
             sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
@@ -172,6 +174,11 @@ export default function AppLayout({
             zIndex: 1200,
             borderTop: '1px solid',
             borderColor: 'divider',
+            '& .MuiBottomNavigationAction-root': {
+              minWidth: 0,
+              flex: 1,
+              px: 0.5,
+            },
           }}
         >
           {mobilePrimary.map((item) => (
@@ -239,7 +246,7 @@ export default function AppLayout({
           position: 'fixed',
           right: { xs: 16, md: 28 },
           bottom: { xs: 84, md: 28 },
-          display: page === 'order' ? 'none' : 'flex',
+          display: page === 'order' || (!desktop && ['home', 'settings'].includes(page)) ? 'none' : 'flex',
         }}
       >
         <SpeedDialAction

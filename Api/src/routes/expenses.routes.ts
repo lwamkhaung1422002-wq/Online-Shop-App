@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 
 import type { Prisma } from "../generated/prisma/client.js";
+import { writeAuditLog } from "../lib/audit-log.js";
 import { prisma } from "../lib/prisma.js";
 import { assertUserOwnsShop } from "../lib/shop-access.js";
 import { getAuthUser, requireAuth } from "../middleware/auth.middleware.js";
@@ -17,6 +18,7 @@ const moneySchema = z.coerce.number().int().nonnegative();
 const expenseSchema = z.object({
   title: z.string().trim().min(1, "Expense title is required."),
   category: z.string().trim().optional(),
+  method: z.string().trim().optional(),
   amount: moneySchema,
   spentAt: z.coerce.date().optional(),
   note: z.string().trim().optional(),
@@ -63,11 +65,23 @@ expensesRouter.post("/:shopId/expenses", async (request, response, next) => {
       title: input.title,
       amount: input.amount,
       ...(input.category !== undefined ? { category: input.category } : {}),
+      ...(input.method !== undefined ? { method: input.method } : {}),
       ...(input.spentAt !== undefined ? { spentAt: input.spentAt } : {}),
       ...(input.note !== undefined ? { note: input.note } : {}),
     };
 
-    const expense = await prisma.expense.create({ data });
+    const expense = await prisma.$transaction(async (tx) => {
+      const createdExpense = await tx.expense.create({ data });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "expense.create",
+        entity: "Expense",
+        entityId: createdExpense.id,
+        metadata: { amount: input.amount, category: input.category ?? null, method: input.method ?? null },
+      });
+      return createdExpense;
+    });
 
     response.status(201).json({ expense });
   } catch (error) {
@@ -94,14 +108,25 @@ expensesRouter.patch("/:shopId/expenses/:expenseId", async (request, response, n
     const data: Prisma.ExpenseUncheckedUpdateInput = {
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.category !== undefined ? { category: input.category } : {}),
+      ...(input.method !== undefined ? { method: input.method } : {}),
       ...(input.amount !== undefined ? { amount: input.amount } : {}),
       ...(input.spentAt !== undefined ? { spentAt: input.spentAt } : {}),
       ...(input.note !== undefined ? { note: input.note } : {}),
     };
 
-    const expense = await prisma.expense.update({
-      where: { id: expenseId },
-      data,
+    const expense = await prisma.$transaction(async (tx) => {
+      const updatedExpense = await tx.expense.update({
+        where: { id: expenseId },
+        data,
+      });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "expense.update",
+        entity: "Expense",
+        entityId: expenseId,
+      });
+      return updatedExpense;
     });
 
     response.status(200).json({ expense });
@@ -125,7 +150,16 @@ expensesRouter.delete("/:shopId/expenses/:expenseId", async (request, response, 
 
     if (!existingExpense) throw notFound("Expense not found.");
 
-    await prisma.expense.delete({ where: { id: expenseId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.expense.delete({ where: { id: expenseId } });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "expense.delete",
+        entity: "Expense",
+        entityId: expenseId,
+      });
+    });
 
     response.status(204).send();
   } catch (error) {

@@ -1,0 +1,17 @@
+{
+  "name": "General Shop Owner POS",
+  "short_name": "Shop Owner",
+  "description": "Mobile-friendly POS, stock, order, payment, and finance workspace for shop owners.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f3ff",
+  "theme_color": "#5b35f5",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

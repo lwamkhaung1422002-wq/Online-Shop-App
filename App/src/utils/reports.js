@@ -172,7 +172,7 @@ export function printOrderReceipt(rawOrder) {
         </div>
         ${order.remark ? `<p class="print-note"><strong>Remark:</strong> ${escapeHtml(order.remark)}</p>` : ''}
       `,
-      `${order.fulfillmentStatus} Â· ${order.paymentStatus}`,
+      `${order.fulfillmentStatus} · ${order.paymentStatus}`,
     ),
   )
 }

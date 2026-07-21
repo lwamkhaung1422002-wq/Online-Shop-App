@@ -22,6 +22,7 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded'
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded'
 import PageHeader from '../components/PageHeader.jsx'
+import SectionCard from '../components/SectionCard.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
@@ -286,6 +287,7 @@ export default function OrderPage({ navigate, refresh, requireAuth }) {
           ? {
               ...payment,
               method: selectedPaymentMethod,
+              scope: advancedPayment ? 'advanced-payment' : 'order-payment',
               amount: advancedPayment ? paymentAmount : finalTotals.total,
               note: advancedPayment ? `Advanced payment${payment.note ? ` - ${payment.note}` : ''}` : payment.note,
               settings,
@@ -309,17 +311,21 @@ export default function OrderPage({ navigate, refresh, requireAuth }) {
 
       <Box component="form" onSubmit={submitOrder} className="order-workspace">
         <Stack spacing={2}>
-          <Paper variant="outlined" className="section-card">
-            <Typography variant="h6">Sale type</Typography>
+          <SectionCard>
+            <Typography variant="h6" className="workflow-step" data-step="1">
+              Sale type
+            </Typography>
             <ToggleButtonGroup value={orderType} exclusive fullWidth onChange={(_, value) => value && setOrderType(value)} sx={{ mt: 2 }}>
               <ToggleButton value="online">Online Order</ToggleButton>
               <ToggleButton value="in-store">In-Store Sale</ToggleButton>
             </ToggleButtonGroup>
-          </Paper>
+          </SectionCard>
 
           {orderType === 'online' ? (
-            <Paper variant="outlined" className="section-card">
-              <Typography variant="h6">Customer and delivery</Typography>
+            <SectionCard>
+              <Typography variant="h6" className="workflow-step" data-step="2">
+                Customer and delivery
+              </Typography>
               <Box className="form-grid" sx={{ mt: 2 }}>
                 <TextField className="span-6" label="Customer name" value={customer.name} onChange={(event) => setCustomer((current) => ({ ...current, name: event.target.value }))} required />
                 <TextField className="span-6" label="Phone" value={customer.phone} onChange={(event) => setCustomer((current) => ({ ...current, phone: event.target.value }))} required />
@@ -335,20 +341,24 @@ export default function OrderPage({ navigate, refresh, requireAuth }) {
                 </FormControl>
                 <TextField className="span-12" label="Address" value={customer.address} onChange={(event) => setCustomer((current) => ({ ...current, address: event.target.value }))} multiline minRows={2} />
               </Box>
-            </Paper>
+            </SectionCard>
           ) : (
-            <Paper variant="outlined" className="section-card">
-              <Typography variant="h6">In-store sale</Typography>
+            <SectionCard>
+              <Typography variant="h6" className="workflow-step" data-step="2">
+                In-store sale
+              </Typography>
               <Alert severity="info" sx={{ mt: 2 }}>
                 Customer, delivery, deposit, and COD settlement details are not required for in-store sales.
               </Alert>
               <TextField sx={{ mt: 2 }} type="date" label="Sale date" value={date} onChange={(event) => setDate(event.target.value)} slotProps={{ inputLabel: { shrink: true } }} fullWidth />
-            </Paper>
+            </SectionCard>
           )}
 
-          <Paper variant="outlined" className="section-card">
+          <SectionCard>
             <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="h6">Add products</Typography>
+              <Typography variant="h6" className="workflow-step" data-step="3">
+                Add products
+              </Typography>
               {orderType === 'online' ? (
                 <FormControlLabel control={<Checkbox checked={preorder} onChange={(event) => setPreorder(event.target.checked)} />} label="Preorder" />
               ) : null}
@@ -381,10 +391,9 @@ export default function OrderPage({ navigate, refresh, requireAuth }) {
                 <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={addItem}>Add item</Button>
               </Stack>
             </Box>
-          </Paper>
+          </SectionCard>
 
-          <Paper variant="outlined" className="section-card">
-            <Typography variant="h6">Items</Typography>
+          <SectionCard title="Items" subtitle="Review selected products before creating the sale.">
             <Stack spacing={1.25} sx={{ mt: 2 }}>
               {items.map((item) => (
                 <Box key={item.id} className="cart-line">
@@ -394,7 +403,7 @@ export default function OrderPage({ navigate, refresh, requireAuth }) {
                       {item.variantName} - {item.quantity} x {formatKs(item.unitPrice)}
                     </Typography>
                   </Box>
-                  <Stack direction="row" alignItems="center" gap={1}>
+                  <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
                     <Typography fontWeight={800}>{formatKs(item.lineTotal)}</Typography>
                     <IconButton color="error" onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}>
                       <DeleteOutlineRoundedIcon />
@@ -404,11 +413,13 @@ export default function OrderPage({ navigate, refresh, requireAuth }) {
               ))}
               {!items.length ? <Typography color="text.secondary">No items added yet.</Typography> : null}
             </Stack>
-          </Paper>
+          </SectionCard>
         </Stack>
 
         <Paper variant="outlined" className="order-summary-card">
-          <Typography variant="h6">Summary</Typography>
+          <Typography variant="h6" className="workflow-step" data-step="4">
+            Summary
+          </Typography>
           <Stack spacing={1.5} sx={{ mt: 2 }}>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography>Subtotal</Typography><Typography>{formatKs(totals.subtotal)}</Typography></Stack>
             <TextField type="number" label="Order discount" value={orderDiscount} onChange={(event) => setOrderDiscount(event.target.value)} slotProps={{ htmlInput: { min: 0 } }} />

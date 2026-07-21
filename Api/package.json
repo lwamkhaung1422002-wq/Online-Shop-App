@@ -14,6 +14,7 @@
     "postinstall": "prisma generate",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test:api": "tsx scripts/local-api-test.ts",
     "prisma:validate": "prisma validate",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
@@ -21,7 +22,13 @@
     "prisma:deploy": "prisma migrate deploy",
     "railway:deploy": "prisma migrate deploy && node dist/server.js",
     "prisma:seed": "prisma db seed",
+    "db:seed:local": "tsx prisma/seed.ts",
+    "db:reset:local": "tsx scripts/reset-local-db.ts",
+    "db:backup:local": "tsx scripts/backup-local-db.ts",
     "prisma:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "author": "",

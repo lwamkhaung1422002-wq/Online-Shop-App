@@ -4,6 +4,9 @@ Express API for the `App` frontend, designed for Railway with Neon PostgreSQL.
 
 ## Local Development
 
+For the full safe local-first workflow, including local PostgreSQL setup, seed data,
+sample account, smoke tests, and reset guard, see `../LOCAL_DEVELOPMENT.md`.
+
 ```bash
 npm install
 npm run dev

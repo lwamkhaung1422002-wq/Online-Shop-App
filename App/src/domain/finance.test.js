@@ -44,6 +44,31 @@ describe('financial summary', () => {
 })
 
 describe('payment method balances', () => {
+  it('counts advanced payments as received income for their method', () => {
+    expect(
+      getReceivedByMethod(
+        [
+          {
+            id: 'advance-1',
+            orderId: 'order-1',
+            type: 'payment',
+            scope: 'advanced-payment',
+            method: 'Cash',
+            amount: 12000,
+          },
+        ],
+        {
+          'order-1': {
+            id: 'order-1',
+            fulfillmentStatus: 'reserved',
+            paymentStatus: 'unpaid',
+            total: 50000,
+          },
+        },
+      ),
+    ).toEqual({ Cash: 12000 })
+  })
+
   it('counts a multi-order COD settlement once and excludes its void correction', () => {
     const settlement = {
       id: 'settlement-1',

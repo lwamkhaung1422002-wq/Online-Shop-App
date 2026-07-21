@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
+import { writeAuditLog } from "../lib/audit-log.js";
 import { prisma } from "../lib/prisma.js";
 import { assertUserOwnsShop } from "../lib/shop-access.js";
 import { getAuthUser, requireAuth } from "../middleware/auth.middleware.js";
@@ -16,6 +17,7 @@ const positiveMoneySchema = z.coerce.number().int().positive();
 
 const receivePaymentSchema = z.object({
   method: z.string().trim().min(1, "Payment method is required."),
+  scope: z.enum(["order-payment", "advanced-payment"]).optional(),
   amount: positiveMoneySchema.optional(),
   billNumber: z.string().trim().optional(),
   transactionId: z.string().trim().optional(),
@@ -213,6 +215,7 @@ paymentsRouter.post("/:shopId/orders/:orderId/payments", async (request, respons
     const result = await prisma.$transaction(async (tx) => {
       const order = await tx.order.findFirst({
         where: { id: orderId, shopId },
+        include: { items: { include: { allocations: true } } },
       });
 
       if (!order) throw notFound("Order not found.");
@@ -247,6 +250,7 @@ paymentsRouter.post("/:shopId/orders/:orderId/payments", async (request, respons
           shopId,
           orderId: order.id,
           type: "payment",
+          scope: input.scope ?? "order-payment",
           method: input.method,
           amount,
           ...(input.billNumber !== undefined ? { billNumber: input.billNumber } : {}),
@@ -257,6 +261,14 @@ paymentsRouter.post("/:shopId/orders/:orderId/payments", async (request, respons
       });
 
       const updatedOrder = await updateOrderPaymentStatus(tx, shopId, order.id);
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: input.scope === "advanced-payment" ? "payment.advanced" : "payment.receive",
+        entity: "Payment",
+        entityId: payment.id,
+        metadata: { orderId: order.id, amount, method: input.method },
+      });
 
       return { payment: serializePayment(payment), order: updatedOrder };
     });
@@ -337,6 +349,14 @@ paymentsRouter.post("/:shopId/payments/cod-settlements", async (request, respons
       for (const orderId of orderIds) {
         orders.push(await updateOrderPaymentStatus(tx, shopId, orderId));
       }
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "payment.codSettlement",
+        entity: "Payment",
+        entityId: payment.id,
+        metadata: { amount, orderIds },
+      });
 
       return { payment: serializePayment(payment), orders };
     });
@@ -400,6 +420,14 @@ paymentsRouter.post("/:shopId/payments/:paymentId/void", async (request, respons
       for (const orderId of orderIds) {
         orders.push(await updateOrderPaymentStatus(tx, shopId, orderId));
       }
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "payment.codSettlementVoid",
+        entity: "Payment",
+        entityId: voidPayment.id,
+        metadata: { originalPaymentId: original.id, reason: input.reason, orderIds },
+      });
 
       return { payment: serializePayment(voidPayment), orders };
     });
@@ -422,6 +450,7 @@ paymentsRouter.post("/:shopId/orders/:orderId/refunds", async (request, response
     const result = await prisma.$transaction(async (tx) => {
       const order = await tx.order.findFirst({
         where: { id: orderId, shopId },
+        include: { items: { include: { allocations: true } } },
       });
 
       if (!order) throw notFound("Order not found.");
@@ -452,6 +481,7 @@ paymentsRouter.post("/:shopId/orders/:orderId/refunds", async (request, response
           shopId,
           orderId: order.id,
           type: "refund",
+          scope: "refund",
           method: input.method,
           amount: -Math.abs(refundAmount),
           reason: input.note,
@@ -473,6 +503,31 @@ paymentsRouter.post("/:shopId/orders/:orderId/refunds", async (request, response
           items: { include: { product: true, variant: true, allocations: true } },
           payments: true,
         },
+      });
+
+      if (refundAmount >= paidAmount) {
+        for (const item of order.items) {
+          for (const allocation of item.allocations) {
+            const batch = await tx.inventoryBatch.findUnique({
+              where: { id: allocation.inventoryBatchId },
+            });
+            if (!batch) continue;
+            await tx.inventoryBatch.update({
+              where: { id: batch.id },
+              data: {
+                reservedQuantity: Math.max(0, batch.reservedQuantity - allocation.quantity),
+              },
+            });
+          }
+        }
+      }
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "payment.refund",
+        entity: "Payment",
+        entityId: refund.id,
+        metadata: { orderId: order.id, refundAmount, method: input.method, restoredStock: refundAmount >= paidAmount },
       });
 
       return { refund: serializePayment(refund), order: updatedOrder };

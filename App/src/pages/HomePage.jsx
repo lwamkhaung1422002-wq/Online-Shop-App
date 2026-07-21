@@ -7,7 +7,6 @@ import {
   CardContent,
   Chip,
   Collapse,
-  Paper,
   Stack,
   Table,
   TableBody,
@@ -28,6 +27,8 @@ import PaidRoundedIcon from '@mui/icons-material/PaidRounded'
 import PostAddRoundedIcon from '@mui/icons-material/PostAddRounded'
 import MetricCard from '../components/MetricCard.jsx'
 import PageHeader from '../components/PageHeader.jsx'
+import SectionCard from '../components/SectionCard.jsx'
+import EmptyState from '../components/EmptyState.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import {
   buildAppState,
@@ -182,8 +183,7 @@ export default function HomePage({ navigate }) {
         />
       </Box>
 
-      <Paper variant="outlined" className="section-card home-quick-actions">
-        <Typography variant="h6">Quick actions</Typography>
+      <SectionCard title="Quick actions" subtitle="Start the most common shop workflows.">
         <Box className="quick-action-grid">
           <Button
             variant="contained"
@@ -214,19 +214,14 @@ export default function HomePage({ navigate }) {
             Add Expense
           </Button>
         </Box>
-      </Paper>
+      </SectionCard>
 
       <Box className="home-main-grid">
-        <Paper variant="outlined" className="section-card home-stock-alerts">
-          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <Box>
-              <Typography variant="h6">Stock alerts</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Products requiring attention
-              </Typography>
-            </Box>
-            <Button onClick={() => navigate('stock')}>Open stock</Button>
-          </Stack>
+        <SectionCard
+          title="Stock alerts"
+          subtitle="Products requiring attention"
+          actions={<Button onClick={() => navigate('stock')}>Open stock</Button>}
+        >
           <Stack spacing={1} sx={{ mt: 2 }}>
             {stockOverview.alerts.slice(0, 6).map((item) => (
               <Alert
@@ -238,24 +233,19 @@ export default function HomePage({ navigate }) {
               </Alert>
             ))}
             {!stockOverview.alerts.length ? (
-              <Box className="empty-state compact">
-                <Typography fontWeight={800}>Stock levels look healthy</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  No low or out-of-stock products.
-                </Typography>
-              </Box>
+              <EmptyState
+                compact
+                title="Stock levels look healthy"
+                message="No low or out-of-stock products."
+              />
             ) : null}
           </Stack>
-        </Paper>
+        </SectionCard>
 
-        <Paper variant="outlined" className="section-card home-finance-summary">
-          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <Box>
-              <Typography variant="h6">Financial summary</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Received balance and profitability
-              </Typography>
-            </Box>
+        <SectionCard
+          title="Financial summary"
+          subtitle="Received balance and profitability"
+          actions={
             <Button
               onClick={() =>
                 setDetails((current) => ({ ...current, finance: !current.finance }))
@@ -263,7 +253,8 @@ export default function HomePage({ navigate }) {
             >
               {details.finance ? 'Hide' : 'Details'}
             </Button>
-          </Stack>
+          }
+        >
           <Stack spacing={1.25} sx={{ mt: 2 }}>
             <SummaryRow label="Current Balance" value={formatKs(totalBalance)} tone="success.main" />
             <SummaryRow label="Gross Profit" value={formatKs(financialSummary.grossProfit)} />
@@ -287,10 +278,10 @@ export default function HomePage({ navigate }) {
               ))}
             </Box>
           </Collapse>
-        </Paper>
+        </SectionCard>
       </Box>
 
-      <Paper variant="outlined" className="section-card home-sales-section">
+      <SectionCard>
         <Stack
           direction={{ xs: 'column', md: 'row' }}
           gap={2}
@@ -383,7 +374,7 @@ export default function HomePage({ navigate }) {
             </TableBody>
           </Table>
         </TableContainer>
-      </Paper>
+      </SectionCard>
     </Box>
   )
 }

@@ -17,6 +17,11 @@ export function errorHandler(
     return;
   }
 
+  if (error instanceof Error && error.name === "ForbiddenError") {
+    response.status(403).json({ message: error.message });
+    return;
+  }
+
   if (error instanceof ZodError) {
     response.status(400).json({
       message: "Validation error.",
@@ -25,7 +30,7 @@ export function errorHandler(
     return;
   }
 
-  if (error instanceof Error) {
+  if (error instanceof Error && process.env.NODE_ENV !== "production") {
     response.status(500).json({ message: error.message });
     return;
   }

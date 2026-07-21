@@ -1,5 +1,7 @@
 import { Component } from 'react'
-import { Alert, Box, Button, Paper, Typography } from '@mui/material'
+import { Alert, Box, Button, Paper, Stack, Typography } from '@mui/material'
+import HomeRoundedIcon from '@mui/icons-material/HomeRounded'
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 
 export default class AppErrorBoundary extends Component {
   state = { error: null }
@@ -17,19 +19,33 @@ export default class AppErrorBoundary extends Component {
 
     return (
       <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', p: 2 }}>
-        <Paper variant="outlined" sx={{ maxWidth: 560, p: 3 }}>
-          <Typography variant="h5" gutterBottom>
-            Something went wrong
+        <Paper variant="outlined" className="section-card" sx={{ maxWidth: 600 }}>
+          <Typography variant="h5" fontWeight={900} gutterBottom>
+            The workspace needs a refresh
           </Typography>
-          <Alert severity="error" sx={{ my: 2 }}>
-            {this.state.error.message || 'The application encountered an unexpected error.'}
+          <Typography color="text.secondary">
+            Your data was not changed. Reload the app and try the last action again.
+          </Typography>
+          <Alert severity="error" variant="outlined" sx={{ my: 2 }}>
+            The application hit an unexpected display error.
           </Alert>
-          <Button variant="contained" onClick={() => window.location.reload()}>
-            Reload application
-          </Button>
+          <Stack direction={{ xs: 'column', sm: 'row' }} gap={1}>
+            <Button variant="contained" startIcon={<RefreshRoundedIcon />} onClick={() => window.location.reload()}>
+              Reload application
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<HomeRoundedIcon />}
+              onClick={() => {
+                window.location.hash = '#/home'
+                window.location.reload()
+              }}
+            >
+              Go to home
+            </Button>
+          </Stack>
         </Paper>
       </Box>
     )
   }
 }
-

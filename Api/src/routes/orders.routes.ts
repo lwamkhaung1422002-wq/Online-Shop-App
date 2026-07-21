@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
+import { writeAuditLog } from "../lib/audit-log.js";
 import { prisma } from "../lib/prisma.js";
 import { assertUserOwnsShop } from "../lib/shop-access.js";
 import { getAuthUser, requireAuth } from "../middleware/auth.middleware.js";
@@ -425,6 +426,20 @@ ordersRouter.post("/:shopId/orders", async (request, response, next) => {
         },
       });
 
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "order.create",
+        entity: "Order",
+        entityId: fullOrder.id,
+        metadata: {
+          total,
+          fulfillmentStatus: input.fulfillmentStatus,
+          source: input.source ?? null,
+          itemCount: preparedItems.length,
+        },
+      });
+
       return fullOrder;
     });
 
@@ -442,7 +457,17 @@ ordersRouter.post("/:shopId/orders/:orderId/fulfill", async (request, response, 
 
     await assertUserOwnsShop(authUser.id, shopId);
 
-    const order = await prisma.$transaction((tx) => reserveOrderInventory(tx, shopId, orderId));
+    const order = await prisma.$transaction(async (tx) => {
+      const fulfilledOrder = await reserveOrderInventory(tx, shopId, orderId);
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "order.fulfill",
+        entity: "Order",
+        entityId: orderId,
+      });
+      return fulfilledOrder;
+    });
 
     response.status(200).json({ order });
   } catch (error) {
@@ -472,17 +497,28 @@ ordersRouter.patch("/:shopId/orders/:orderId/status", async (request, response, 
       throw badRequest("Preorders cannot be completed until converted in a future preorder flow.");
     }
 
-    const order = await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        fulfillmentStatus: input.fulfillmentStatus,
-        completedAt: input.fulfillmentStatus === "completed" ? new Date() : null,
-      },
-      include: {
-        customer: true,
-        items: { include: { product: true, variant: true, allocations: true } },
-        payments: true,
-      },
+    const order = await prisma.$transaction(async (tx) => {
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          fulfillmentStatus: input.fulfillmentStatus,
+          completedAt: input.fulfillmentStatus === "completed" ? new Date() : null,
+        },
+        include: {
+          customer: true,
+          items: { include: { product: true, variant: true, allocations: true } },
+          payments: true,
+        },
+      });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "order.status",
+        entity: "Order",
+        entityId: orderId,
+        metadata: { fulfillmentStatus: input.fulfillmentStatus },
+      });
+      return updatedOrder;
     });
 
     response.status(200).json({ order });
@@ -535,7 +571,7 @@ ordersRouter.post("/:shopId/orders/:orderId/cancel", async (request, response, n
         }
       }
 
-      return tx.order.update({
+      const cancelledOrder = await tx.order.update({
         where: { id: orderId },
         data: {
           fulfillmentStatus: "cancelled",
@@ -548,6 +584,17 @@ ordersRouter.post("/:shopId/orders/:orderId/cancel", async (request, response, n
           payments: true,
         },
       });
+
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "order.cancel",
+        entity: "Order",
+        entityId: orderId,
+        metadata: { reason: input.reason ?? null },
+      });
+
+      return cancelledOrder;
     });
 
     response.status(200).json({ order });
@@ -577,8 +624,17 @@ ordersRouter.delete("/:shopId/orders/:orderId", async (request, response, next) 
       throw badRequest("Orders with payment records must stay in the audit history.");
     }
 
-    await prisma.order.delete({
-      where: { id: orderId },
+    await prisma.$transaction(async (tx) => {
+      await tx.order.delete({
+        where: { id: orderId },
+      });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "order.delete",
+        entity: "Order",
+        entityId: orderId,
+      });
     });
 
     response.status(204).send();

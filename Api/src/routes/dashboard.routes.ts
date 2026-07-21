@@ -38,6 +38,54 @@ function isRecognizedSale(order: {
   );
 }
 
+function parseJsonArray(value: string | null): unknown[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function paidAmountForOrder(orderId: string, payments: Array<{
+  orderId: string | null;
+  orderIds: string | null;
+  allocations: string | null;
+  amount: number;
+  type: string;
+  scope: string | null;
+}>): number {
+  return payments.reduce((sum, payment) => {
+    if (payment.type === "refund" || payment.scope === "cod-settlement-void") {
+      return sum;
+    }
+
+    if (payment.orderId === orderId) {
+      return sum + payment.amount;
+    }
+
+    const orderIds = parseJsonArray(payment.orderIds).filter((entry): entry is string => typeof entry === "string");
+    if (!orderIds.includes(orderId)) return sum;
+
+    const allocations = parseJsonArray(payment.allocations);
+    const allocation = allocations.find((entry) => {
+      return typeof entry === "object" && entry !== null && "orderId" in entry && entry.orderId === orderId;
+    });
+
+    if (
+      typeof allocation === "object" &&
+      allocation !== null &&
+      "amount" in allocation &&
+      typeof allocation.amount === "number"
+    ) {
+      return sum + allocation.amount;
+    }
+
+    return sum;
+  }, 0);
+}
+
 dashboardRouter.get("/:shopId/dashboard", async (request, response, next) => {
   try {
     const authUser = getAuthUser(request);
@@ -49,7 +97,7 @@ dashboardRouter.get("/:shopId/dashboard", async (request, response, next) => {
     const orderCreatedAt = dateRange(query);
     const expenseSpentAt = dateRange(query);
 
-    const [orders, expenses, customersCount, productsCount, lowStockBatches] = await Promise.all([
+    const [orders, payments, expenses, customersCount, productsCount, lowStockBatches] = await Promise.all([
       prisma.order.findMany({
         where: {
           shopId,
@@ -59,6 +107,7 @@ dashboardRouter.get("/:shopId/dashboard", async (request, response, next) => {
           items: true,
         },
       }),
+      prisma.payment.findMany({ where: { shopId } }),
       prisma.expense.findMany({
         where: {
           shopId,
@@ -92,7 +141,7 @@ dashboardRouter.get("/:shopId/dashboard", async (request, response, next) => {
     const netProfit = grossProfit - operatingExpenses;
     const unpaidTotal = orders
       .filter((order) => order.paymentStatus === "unpaid" && order.fulfillmentStatus !== "cancelled")
-      .reduce((sum, order) => sum + order.total, 0);
+      .reduce((sum, order) => sum + Math.max(0, order.total - paidAmountForOrder(order.id, payments)), 0);
 
     const lowStock = lowStockBatches
       .map((batch) => ({

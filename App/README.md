@@ -6,6 +6,9 @@ This frontend uses the `Api` project for auth and production data through REST A
 
 ## Local Development
 
+For the full safe local-first workflow, including local API setup, sample data,
+smoke tests, mobile checks, and production preview, see `../LOCAL_DEVELOPMENT.md`.
+
 ```bash
 npm install
 npm run dev
@@ -42,4 +45,5 @@ VITE_API_BASE_URL=https://your-railway-api.up.railway.app
 - Register and login are handled by the `Api` project.
 - Production data is loaded from the API, not browser-only demo data.
 - The shop name returned by the API is used as the app title and brand.
+- The app includes a minimal web app manifest for PWA/mobile install testing.
 - Deploy the backend and database first, then set `VITE_API_BASE_URL` before deploying this frontend.

@@ -4,6 +4,7 @@ import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded'
 export default function PageHeader({ title, subtitle, onBack, actions }) {
   return (
     <Box
+      className="page-header"
       sx={{
         display: 'flex',
         alignItems: { xs: 'flex-start', sm: 'center' },
@@ -18,8 +19,10 @@ export default function PageHeader({ title, subtitle, onBack, actions }) {
             <ArrowBackRoundedIcon />
           </IconButton>
         ) : null}
-        <Box>
-          <Typography variant="h5">{title}</Typography>
+        <Box className="page-header-copy">
+          <Typography className="page-header-title" variant="h5" sx={{ lineHeight: 1.18 }}>
+            {title}
+          </Typography>
           {subtitle ? (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
               {subtitle}
@@ -30,7 +33,13 @@ export default function PageHeader({ title, subtitle, onBack, actions }) {
       {actions ? (
         <Box
           className="page-header-actions"
-          sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, width: { xs: '100%', sm: 'auto' } }}
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 1,
+            width: { xs: '100%', sm: 'auto' },
+            justifyContent: { xs: 'stretch', sm: 'flex-end' },
+          }}
         >
           {actions}
         </Box>

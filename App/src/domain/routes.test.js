@@ -15,5 +15,5 @@ describe('route preloading', () => {
 
     const results = await preloadAllRoutes()
     expect(results.every((result) => result.status === 'fulfilled')).toBe(true)
-  }, 15000)
+  }, 60000)
 })

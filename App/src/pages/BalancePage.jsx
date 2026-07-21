@@ -28,6 +28,7 @@ import VisibilityRoundedIcon from '@mui/icons-material/VisibilityRounded'
 import MetricCard from '../components/MetricCard.jsx'
 import PageHeader from '../components/PageHeader.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import SectionCard from '../components/SectionCard.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import {
@@ -193,23 +194,19 @@ export default function BalancePage({ refresh, requireAuth }) {
         <MetricCard title="Net Profit" value={formatKs(net)} tone={net >= 0 ? 'success' : 'error'} />
       </div>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}>
-          <Box>
-            <Typography variant="h6">Balance by Payment Method</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Received orders grouped by payment method.
-            </Typography>
-          </Box>
+      <SectionCard
+        title="Balance by Payment Method"
+        subtitle="Received orders grouped by payment method."
+        actions={
           <Button
             variant="outlined"
-            color="error"
             startIcon={<PictureAsPdfRoundedIcon />}
             onClick={handleExportBalancePDF}
           >
             Export Balance PDF
           </Button>
-        </Stack>
+        }
+      >
         <Box className="metric-grid" sx={{ mt: 2 }}>
           {Object.entries(incomeMap).map(([method, value]) => (
             <MetricCard key={method} title={method} value={formatKs(value)} />
@@ -221,12 +218,9 @@ export default function BalancePage({ refresh, requireAuth }) {
         <Typography sx={{ mt: 2 }} fontWeight={800}>
           Total Balance : {formatKs(incomeTotal)}
         </Typography>
-      </Paper>
+      </SectionCard>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Profit by Product Type
-        </Typography>
+      <SectionCard title="Profit by Product Type" subtitle="Income, cost, expense, and profit by product.">
         <Box className="mobile-data-list">
           {Object.entries(typeProfit).map(([type, data]) => {
             const profit = data.income - data.cost - data.expense
@@ -286,20 +280,17 @@ export default function BalancePage({ refresh, requireAuth }) {
             </TableBody>
           </Table>
         </TableContainer>
-      </Paper>
+      </SectionCard>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ mb: 2, justifyContent: 'space-between', alignItems: { sm: 'center' } }}>
-          <Box>
-            <Typography variant="h6">{editingExpenseId ? 'Edit Expense' : 'Add Expense'}</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Expenses reduce net profit and type-level profit.
-            </Typography>
-          </Box>
+      <SectionCard
+        title={editingExpenseId ? 'Edit Expense' : 'Add Expense'}
+        subtitle="Expenses reduce net profit and type-level profit."
+        actions={
           <Button variant="outlined" startIcon={<VisibilityRoundedIcon />} onClick={() => setExpenseDialogOpen(true)}>
             View Expense Details
           </Button>
-        </Stack>
+        }
+      >
 
         <Box className="form-grid">
           <TextField
@@ -359,7 +350,7 @@ export default function BalancePage({ refresh, requireAuth }) {
             Save
           </Button>
         </Stack>
-      </Paper>
+      </SectionCard>
 
       <Dialog open={expenseDialogOpen} onClose={() => setExpenseDialogOpen(false)} fullWidth maxWidth="lg">
         <DialogTitle>Expense Details</DialogTitle>

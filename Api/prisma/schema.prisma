@@ -35,6 +35,7 @@ model Shop {
   orders      Order[]
   payments    Payment[]
   expenses    Expense[]
+  auditLogs   AuditLog[]
   setting     ShopSetting?
 
   @@index([ownerId])
@@ -277,6 +278,7 @@ model Expense {
   shopId    String
   title     String
   category  String?
+  method    String?
   amount    Int
   spentAt   DateTime @default(now())
   note      String?
@@ -286,4 +288,21 @@ model Expense {
 
   @@index([shopId])
   @@index([spentAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  shopId    String
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId])
+  @@index([actorId])
+  @@index([entity])
+  @@index([createdAt])
 }

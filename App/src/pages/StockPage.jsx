@@ -30,6 +30,8 @@ import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded'
 import PageHeader from '../components/PageHeader.jsx'
 import MetricCard from '../components/MetricCard.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import EmptyState from '../components/EmptyState.jsx'
+import DataToolbar from '../components/DataToolbar.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
@@ -384,13 +386,16 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
         }
       />
 
-      <TextField
-        label="Search stock"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search product, variant, option value, note, price, or date"
-        fullWidth
-      />
+      <DataToolbar title="Find stock" subtitle="Search by product, variant, option, note, date, or price.">
+        <TextField
+          label="Search stock"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search stock records"
+          fullWidth
+          size="small"
+        />
+      </DataToolbar>
 
       <div className="metric-grid wide">
         <MetricCard title="Available Stock" value={totals.totalAvailable} tone="success" />
@@ -553,9 +558,11 @@ export default function StockPage({ refresh, requireAuth, navigate }) {
 
 function EmptyStock() {
   return (
-    <Box className="empty-state">
-      <Typography fontWeight={800}>No stock records</Typography>
-    </Box>
+    <EmptyState
+      title="No stock records"
+      message="Add stock after creating a product in App Settings."
+      compact
+    />
   )
 }
 

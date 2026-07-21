@@ -6,6 +6,8 @@ import {
   Card,
   CardContent,
   CircularProgress,
+  IconButton,
+  InputAdornment,
   Tab,
   Tabs,
   TextField,
@@ -13,6 +15,8 @@ import {
 } from '@mui/material'
 import LockRoundedIcon from '@mui/icons-material/LockRounded'
 import StorefrontRoundedIcon from '@mui/icons-material/StorefrontRounded'
+import VisibilityRoundedIcon from '@mui/icons-material/VisibilityRounded'
+import VisibilityOffRoundedIcon from '@mui/icons-material/VisibilityOffRounded'
 import { useAuth } from '../contexts/AuthContext.jsx'
 
 function getAuthErrorMessage(error) {
@@ -26,6 +30,7 @@ export default function LoginPage() {
   const [shopName, setShopName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -64,7 +69,7 @@ export default function LoginPage() {
           p: 7,
           color: 'white',
           background:
-            'radial-gradient(circle at 80% 20%, rgba(255,255,255,.22), transparent 22rem), linear-gradient(145deg, #39229b, #6d4aff 58%, #9678ff)',
+            'radial-gradient(circle at 80% 20%, rgba(255,255,255,.22), transparent 22rem), linear-gradient(145deg, #2e1c80, #5b3df5 58%, #8b73ff)',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -72,8 +77,8 @@ export default function LoginPage() {
           <Typography fontWeight={900}>Shop Owner</Typography>
         </Box>
         <Box sx={{ maxWidth: 560 }}>
-          <Typography variant="h2" fontWeight={900} sx={{ letterSpacing: '-0.04em' }}>
-            Run your shop with confidence.
+            <Typography variant="h2" fontWeight={900} sx={{ letterSpacing: 0, lineHeight: 1.05 }}>
+              Run your shop with confidence.
           </Typography>
           <Typography sx={{ mt: 2, opacity: 0.82, fontSize: 18 }}>
             Orders, inventory, payments, expenses, and profit kept together in one clear workspace.
@@ -92,6 +97,7 @@ export default function LoginPage() {
             maxWidth: 440,
             borderColor: '#e1daf2',
             boxShadow: '0 24px 70px rgba(52, 37, 91, 0.10)',
+            borderRadius: 4,
           }}
         >
           <CardContent sx={{ p: { xs: 3, sm: 4 } }}>
@@ -159,11 +165,27 @@ export default function LoginPage() {
               />
               <TextField
                 label="Password"
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                 helperText={mode === 'register' ? 'Use at least 8 characters.' : ''}
+                slotProps={{
+                  input: {
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          edge="end"
+                          onClick={() => setShowPassword((current) => !current)}
+                          onMouseDown={(event) => event.preventDefault()}
+                        >
+                          {showPassword ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  },
+                }}
                 required
                 fullWidth
               />

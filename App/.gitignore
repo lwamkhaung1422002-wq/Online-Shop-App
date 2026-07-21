@@ -18,6 +18,7 @@ dist
 dist-ssr
 .netlify
 *.local
+!.env.local.example
 
 # Editor directories and files
 .vscode/*

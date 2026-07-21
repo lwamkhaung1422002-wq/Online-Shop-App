@@ -17,6 +17,9 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded'
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded'
 import PageHeader from '../components/PageHeader.jsx'
+import SectionCard from '../components/SectionCard.jsx'
+import EmptyState from '../components/EmptyState.jsx'
+import StatusChip from '../components/StatusChip.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import { useFeedback } from '../contexts/FeedbackContext.jsx'
@@ -329,16 +332,11 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
     <Box className="page-stack">
       <PageHeader title="App Settings" subtitle="Manage products, stock options, and payment methods." />
 
-      <Paper variant="outlined" className="section-card">
-        <Stack direction={{ xs: 'column', md: 'row' }} gap={2} sx={{ justifyContent: 'space-between' }}>
-          <Box>
-            <Typography variant="h6">Stock Settings</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Add up to 3 option groups for each product. Variants are created when stock is added or sold.
-            </Typography>
-          </Box>
-          <Button variant="outlined" onClick={resetProduct}>New product</Button>
-        </Stack>
+      <SectionCard
+        title="Stock Settings"
+        subtitle="Add up to 3 option groups for each product. Variants are created when stock is added or sold."
+        actions={<Button variant="outlined" onClick={resetProduct}>New product</Button>}
+      >
         <Box className="form-grid" sx={{ mt: 2 }}>
           <TextField
             className="span-12"
@@ -347,7 +345,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
             onChange={(event) => setProductDraft((current) => ({ ...current, name: event.target.value }))}
           />
         </Box>
-        <Stack direction="row" gap={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
+        <Stack className="settings-product-actions" direction="row" gap={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
           <Button variant="contained" startIcon={<SaveRoundedIcon />} onClick={saveProduct} disabled={saving}>
             Save product
           </Button>
@@ -418,10 +416,9 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
             <Alert severity="info">Leave option levels empty for products with no options.</Alert>
           ) : null}
         </Stack>
-      </Paper>
+      </SectionCard>
 
-      <Paper variant="outlined" className="section-card">
-        <Typography variant="h6">Products</Typography>
+      <SectionCard title="Products" subtitle="Choose a product to review or edit its option settings.">
         <Stack direction="row" gap={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
           {data.products.map((product) => (
             <Chip
@@ -432,12 +429,17 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
               onClick={() => loadProduct(product)}
             />
           ))}
-          {!data.products.length ? <Typography color="text.secondary">No products yet.</Typography> : null}
+          {!data.products.length ? (
+            <EmptyState
+              compact
+              title="No products yet"
+              message="Create your first product above before adding stock."
+            />
+          ) : null}
         </Stack>
-      </Paper>
+      </SectionCard>
 
-      <Paper variant="outlined" className="section-card">
-        <Typography variant="h6">Payment Method Settings</Typography>
+      <SectionCard title="Payment Method Settings" subtitle="Create, reorder, activate, or remove payment methods.">
         <Box className="form-grid" sx={{ mt: 2 }}>
           <TextField
             className="span-5"
@@ -492,6 +494,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
                     <MenuItem value="inactive">Inactive</MenuItem>
                   </Select>
                 </FormControl>
+                <StatusChip status={method.active ? 'active' : 'inactive'} />
               </Stack>
               <Stack direction="row" gap={0.5}>
                 <Button size="small" disabled={index === 0} onClick={() => movePaymentMethod(method.id, -1)}>Up</Button>
@@ -504,7 +507,7 @@ export default function AppSettingsPage({ refresh, requireAuth }) {
         <Button sx={{ mt: 2 }} variant="contained" startIcon={<SaveRoundedIcon />} onClick={saveMethods} disabled={saving}>
           Save payment methods
         </Button>
-      </Paper>
+      </SectionCard>
     </Box>
   )
 }

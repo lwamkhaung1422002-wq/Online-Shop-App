@@ -35,6 +35,7 @@ const theme = createTheme({
     primary: {
       main: '#5b3df5',
       dark: '#4226c9',
+      light: '#ede9fe',
     },
     success: {
       main: '#16a34a',
@@ -46,12 +47,17 @@ const theme = createTheme({
       main: '#dc2626',
     },
     background: {
-      default: '#f7f5fb',
+      default: '#f8f7fc',
       paper: '#ffffff',
     },
+    text: {
+      primary: '#171321',
+      secondary: '#645f72',
+    },
+    divider: '#e6e0f2',
   },
   shape: {
-    borderRadius: 14,
+    borderRadius: 12,
   },
   typography: {
     fontFamily: '"Noto Sans Myanmar", Roboto, Arial, sans-serif',
@@ -74,7 +80,14 @@ const theme = createTheme({
       styleOverrides: {
         root: {
           borderRadius: 10,
-          minHeight: 40,
+          minHeight: 42,
+          boxShadow: 'none',
+        },
+        contained: {
+          boxShadow: '0 8px 18px rgba(91, 61, 245, 0.16)',
+          '&:hover': {
+            boxShadow: '0 10px 22px rgba(91, 61, 245, 0.2)',
+          },
         },
       },
     },
@@ -88,8 +101,29 @@ const theme = createTheme({
     MuiPaper: {
       styleOverrides: {
         root: {
-          borderRadius: 16,
+          borderRadius: 14,
           backgroundImage: 'none',
+        },
+      },
+    },
+    MuiTextField: {
+      defaultProps: {
+        variant: 'outlined',
+      },
+    },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          borderRadius: 12,
+          backgroundColor: '#fff',
+        },
+      },
+    },
+    MuiIconButton: {
+      styleOverrides: {
+        root: {
+          minWidth: 40,
+          minHeight: 40,
         },
       },
     },
@@ -114,7 +148,8 @@ function LoadingScreen() {
 function AppGate() {
   const { user, loading } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
-  const shouldShowAuth = showAuth && (!user || user.preview)
+  const location = useLocation()
+  const shouldShowAuth = (!user && location.pathname.replace(/^\/+/, '')) || (showAuth && (!user || user.preview))
 
   if (loading) return <LoadingScreen />
   if (!user || shouldShowAuth) {

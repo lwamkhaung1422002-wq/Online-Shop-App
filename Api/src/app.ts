@@ -45,6 +45,12 @@ function isAllowedDevelopmentOrigin(origin: string | undefined) {
   );
 }
 
+function forbidden(message: string): Error {
+  const error = new Error(message);
+  error.name = "ForbiddenError";
+  return error;
+}
+
 app.use(helmet());
 app.use(pinoHttp());
 app.use(compression());
@@ -56,7 +62,7 @@ app.use(
         return;
       }
 
-      callback(new Error("Not allowed by CORS."));
+      callback(forbidden("Not allowed by CORS."));
     },
   }),
 );

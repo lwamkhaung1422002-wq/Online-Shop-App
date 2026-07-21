@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 
 import type { Prisma } from "../generated/prisma/client.js";
+import { writeAuditLog } from "../lib/audit-log.js";
 import { prisma } from "../lib/prisma.js";
 import { assertUserOwnsShop } from "../lib/shop-access.js";
 import { getAuthUser, requireAuth } from "../middleware/auth.middleware.js";
@@ -261,12 +262,23 @@ productsRouter.post("/:shopId/products", async (request, response, next) => {
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
     };
 
-    const product = await prisma.product.create({
-      data,
-      include: {
-        category: true,
-        variants: true,
-      },
+    const product = await prisma.$transaction(async (tx) => {
+      const createdProduct = await tx.product.create({
+        data,
+        include: {
+          category: true,
+          variants: true,
+        },
+      });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "product.create",
+        entity: "Product",
+        entityId: createdProduct.id,
+        metadata: { name: input.name },
+      });
+      return createdProduct;
     });
 
     response.status(201).json({ product });
@@ -324,13 +336,21 @@ productsRouter.patch("/:shopId/products/:productId", async (request, response, n
         }
       }
 
-      return tx.product.findUniqueOrThrow({
+      const finalProduct = await tx.product.findUniqueOrThrow({
         where: { id: productId },
         include: {
           category: true,
           variants: true,
         },
       });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "product.update",
+        entity: "Product",
+        entityId: productId,
+      });
+      return finalProduct;
     });
 
     response.status(200).json({ product });
@@ -375,7 +395,7 @@ productsRouter.delete("/:shopId/products/:productId", async (request, response, 
         data: { isActive: false, archivedAt: new Date() },
       });
 
-      return tx.product.update({
+      const archivedProduct = await tx.product.update({
         where: { id: productId },
         data: { isActive: false },
         include: {
@@ -383,6 +403,15 @@ productsRouter.delete("/:shopId/products/:productId", async (request, response, 
           variants: true,
         },
       });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "product.archive",
+        entity: "Product",
+        entityId: productId,
+        metadata: { availableQuantity },
+      });
+      return archivedProduct;
     });
 
     response.status(200).json({ product: removedProduct, removed: true });
@@ -441,8 +470,19 @@ productsRouter.post("/:shopId/products/:productId/variants", async (request, res
     data.option2 = input.option2 ?? optionPath[1]?.value ?? null;
     data.option3 = input.option3 ?? optionPath[2]?.value ?? null;
 
-    const variant = await prisma.productVariant.create({
-      data,
+    const variant = await prisma.$transaction(async (tx) => {
+      const createdVariant = await tx.productVariant.create({
+        data,
+      });
+      await writeAuditLog(tx, {
+        shopId,
+        actorId: authUser.id,
+        action: "variant.create",
+        entity: "ProductVariant",
+        entityId: createdVariant.id,
+        metadata: { productId, variantSignature: signature },
+      });
+      return createdVariant;
     });
 
     response.status(201).json({ variant });
@@ -519,9 +559,20 @@ productsRouter.patch(
         data.variantSignature = variantSignature(optionPath);
       }
 
-      const variant = await prisma.productVariant.update({
-        where: { id: variantId },
-        data,
+      const variant = await prisma.$transaction(async (tx) => {
+        const updatedVariant = await tx.productVariant.update({
+          where: { id: variantId },
+          data,
+        });
+        await writeAuditLog(tx, {
+          shopId,
+          actorId: authUser.id,
+          action: "variant.update",
+          entity: "ProductVariant",
+          entityId: variantId,
+          metadata: { productId },
+        });
+        return updatedVariant;
       });
 
       response.status(200).json({ variant });
@@ -567,15 +618,36 @@ productsRouter.delete(
       });
 
       if ((usage?._count.inventory ?? 0) > 0 || (usage?._count.orderItems ?? 0) > 0) {
-        const variant = await prisma.productVariant.update({
-          where: { id: variantId },
-          data: { isActive: false, archivedAt: new Date() },
+        const variant = await prisma.$transaction(async (tx) => {
+          const archivedVariant = await tx.productVariant.update({
+            where: { id: variantId },
+            data: { isActive: false, archivedAt: new Date() },
+          });
+          await writeAuditLog(tx, {
+            shopId,
+            actorId: authUser.id,
+            action: "variant.archive",
+            entity: "ProductVariant",
+            entityId: variantId,
+            metadata: { productId },
+          });
+          return archivedVariant;
         });
         response.status(200).json({ variant, archived: true });
         return;
       }
 
-      await prisma.productVariant.delete({ where: { id: variantId } });
+      await prisma.$transaction(async (tx) => {
+        await tx.productVariant.delete({ where: { id: variantId } });
+        await writeAuditLog(tx, {
+          shopId,
+          actorId: authUser.id,
+          action: "variant.delete",
+          entity: "ProductVariant",
+          entityId: variantId,
+          metadata: { productId },
+        });
+      });
 
       response.status(204).send();
     } catch (error) {

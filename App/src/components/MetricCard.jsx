@@ -10,17 +10,17 @@ export default function MetricCard({ title, value, tone = 'default', icon }) {
   }[tone]
 
   return (
-    <Card variant="outlined">
+    <Card variant="outlined" className="metric-card">
       <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 2.25 }}>
         {icon ? (
           <Box
             sx={{
               width: 40,
               height: 40,
-              borderRadius: 2,
+              borderRadius: 2.5,
               display: 'grid',
               placeItems: 'center',
-              bgcolor: 'grey.100',
+              bgcolor: tone === 'default' ? 'grey.100' : 'primary.light',
               color: toneColor,
               flexShrink: 0,
             }}

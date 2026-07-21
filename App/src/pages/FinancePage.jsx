@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -33,6 +32,9 @@ import PaidOutlinedIcon from '@mui/icons-material/PaidOutlined'
 import ReplayOutlinedIcon from '@mui/icons-material/ReplayOutlined'
 import MetricCard from '../components/MetricCard.jsx'
 import PageHeader from '../components/PageHeader.jsx'
+import SectionCard from '../components/SectionCard.jsx'
+import EmptyState from '../components/EmptyState.jsx'
+import StatusChip from '../components/StatusChip.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useData } from '../contexts/DataContext.jsx'
 import {
@@ -262,18 +264,12 @@ export default function FinancePage({ refresh, requireAuth }) {
       : order.paymentStatus === 'refunded'
         ? 'Refunded'
         : 'Outstanding'
-  const statusColor = (order) =>
-    order.paymentStatus === 'paid'
-      ? 'success'
-      : order.paymentStatus === 'refunded'
-        ? 'error'
-        : 'warning'
   const paymentReferenceText = (order) => {
     const payment = state.paymentById[order.paymentId]
     if (!payment) return ''
     return isCodPaymentMethod(payment.method, data.catalogSettings)
-      ? `COD ${payment.billNumber || '—'} · TX ${payment.transactionId || '—'}`
-      : `${payment.method || 'Payment'} · ${payment.transactionId || '—'}`
+      ? `COD ${payment.billNumber || '-'} · TX ${payment.transactionId || '-'}`
+      : `${payment.method || 'Payment'} · ${payment.transactionId || '-'}`
   }
   const codCandidates = state.outstandingOrders.filter((order) => {
     const term = codOrderSearch.trim().toLowerCase()
@@ -310,7 +306,7 @@ export default function FinancePage({ refresh, requireAuth }) {
         </Alert>
       ) : null}
 
-      <Paper variant="outlined" className="finance-toolbar">
+      <Paper variant="outlined" className="finance-toolbar data-toolbar">
         {mobile ? (
           <FormControl fullWidth size="small" sx={{ mb: 2 }}>
             <InputLabel>Payment status</InputLabel>
@@ -383,9 +379,8 @@ export default function FinancePage({ refresh, requireAuth }) {
                 <Typography fontWeight={900} color="primary.main">
                   {formatKs(order.paymentStatus === 'unpaid' ? order.balanceDue || order.total : order.total)}
                 </Typography>
-                <Chip
-                  size="small"
-                  color={statusColor(order)}
+                <StatusChip
+                  status={order.paymentStatus === 'paid' ? 'received' : order.paymentStatus}
                   label={statusLabel(order)}
                   sx={{ mt: 0.5 }}
                 />
@@ -393,7 +388,7 @@ export default function FinancePage({ refresh, requireAuth }) {
             </Box>
             <Box className="finance-card-meta">
               <Typography variant="caption" color="text.secondary">Source</Typography>
-              <Typography variant="body2" fontWeight={700}>{order.source || '—'}</Typography>
+              <Typography variant="body2" fontWeight={700}>{order.source || '-'}</Typography>
               {paymentReferenceText(order) ? (
                 <>
                   <Typography variant="caption" color="text.secondary">Payment</Typography>
@@ -448,12 +443,11 @@ export default function FinancePage({ refresh, requireAuth }) {
           </Paper>
         ))}
         {!filteredOrders.length ? (
-          <Paper variant="outlined" className="empty-state compact">
-            <Typography fontWeight={800}>No {statusView} orders</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Try another status or clear the search.
-            </Typography>
-          </Paper>
+          <EmptyState
+            compact
+            title={`No ${statusView} orders`}
+            message="Try another status or clear the search."
+          />
         ) : null}
         </Box>
       ) : (
@@ -487,11 +481,14 @@ export default function FinancePage({ refresh, requireAuth }) {
                     {order.customer.phone || 'No phone'} · {order.customer.city || 'No city'}
                   </Typography>
                 </TableCell>
-                <TableCell>{order.source || '—'}</TableCell>
-                <TableCell>{paymentReferenceText(order) || '—'}</TableCell>
+                <TableCell>{order.source || '-'}</TableCell>
+                <TableCell>{paymentReferenceText(order) || '-'}</TableCell>
                 <TableCell align="right">{formatKs(order.paymentStatus === 'unpaid' ? order.balanceDue || order.total : order.total)}</TableCell>
                 <TableCell>
-                  <Chip size="small" color={statusColor(order)} label={statusLabel(order)} />
+                  <StatusChip
+                    status={order.paymentStatus === 'paid' ? 'received' : order.paymentStatus}
+                    label={statusLabel(order)}
+                  />
                 </TableCell>
                 <TableCell align="right">
                   <Box className="table-actions">
@@ -529,10 +526,7 @@ export default function FinancePage({ refresh, requireAuth }) {
         </TableContainer>
       )}
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Payment Method Balance
-        </Typography>
+      <SectionCard title="Payment Method Balance" subtitle="Received money grouped by method.">
         <div className="metric-grid">
           {Object.entries(methodBalance).map(([method, amount]) => (
             <MetricCard key={method} title={method} value={formatKs(amount)} />
@@ -543,7 +537,7 @@ export default function FinancePage({ refresh, requireAuth }) {
         </div>
         <Divider sx={{ my: 2 }} />
         <Typography fontWeight={800}>Total Balance : {formatKs(totalBalance)}</Typography>
-      </Paper>
+      </SectionCard>
 
       <Dialog open={Boolean(receiveOrder)} onClose={() => setReceiveOrder(null)} fullWidth maxWidth="md">
         <DialogTitle>

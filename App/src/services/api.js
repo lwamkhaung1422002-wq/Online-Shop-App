@@ -52,11 +52,16 @@ export async function apiRequest(path, { method = 'GET', body, token = getStored
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    throw new Error(`Cannot reach API at ${API_BASE_URL}. Start the API locally or check VITE_API_BASE_URL.`)
+  }
 
   return parseResponse(response)
 }
